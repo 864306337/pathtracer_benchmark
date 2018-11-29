@@ -21,6 +21,12 @@
 #include "../common/tutorial/scene_device.h"
 #include "../common/tutorial/optics.h"
 
+// Added for printf
+#include <stdio.h>
+
+// Added ISPC function
+#include "benchmark_wrapper.h"
+
 namespace embree {
 
 #undef TILE_SIZE_X
@@ -1585,6 +1591,9 @@ void occlusionFilterHair(const RTCFilterFunctionNArguments* args)
 
 Vec3fa renderPixelFunction(float x, float y, RandomSampler& sampler, const ISPCCamera& camera, RayStats& stats)
 {
+  // Basic ISPC test
+  //ispc::benchmark_wrapper();
+
   /* radiance accumulator and weight */
   Vec3fa L = Vec3fa(0.0f);
   Vec3fa Lw = Vec3fa(1.0f);
@@ -1752,6 +1761,42 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
   renderTile(taskIndex,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
 }
 
+void batchTileTask (int taskIndex, int threadIndex, Ray* batch,
+                         const unsigned int width,
+                         const unsigned int height,
+                         const float time,
+                         const ISPCCamera& camera,
+                         const int numTilesX,
+                         const int numTilesY)
+{
+  // Create the range of pixels for the specific tile
+  const unsigned int tileY = taskIndex / numTilesX;
+  const unsigned int tileX = taskIndex - tileY * numTilesX;
+  const unsigned int x0 = tileX * TILE_SIZE_X;
+  const unsigned int x1 = min(x0+TILE_SIZE_X,width);
+  const unsigned int y0 = tileY * TILE_SIZE_Y;
+  const unsigned int y1 = min(y0+TILE_SIZE_Y,height);
+  
+  // Loop through all the pixels of the given tile, creating a single ray per pixel
+  for (unsigned int y = y0; y < y1; ++y) for (unsigned int x = x0; x < x1; ++x)
+  {
+	// RandomSampler is used to generate random numbers
+    RandomSampler sampler;
+	RandomSampler_init(sampler, (int)x, (int)y, g_accu_count);
+	
+	// Apply the rendomization for the ray inputs
+	float fx = x + RandomSampler_get1D(sampler);
+    float fy = y + RandomSampler_get1D(sampler);
+	float time = RandomSampler_get1D(sampler);
+
+	// Generate the ray
+	Ray ray(Vec3fa(camera.xfm.p),
+                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,time);
+
+	// Store the ray into the batch where the index represents the pixel position in the frame
+	batch[y * width + x] = ray;
+  }
+}
 
 /***************************************************************************************/
 
@@ -1874,14 +1919,53 @@ extern "C" void device_render (int* pixels,
   else
     g_accu_count++;
 
-  /* render image */
+  // Test printf - this is just an example of how to use printf here
+  //printf("This is just a test\n");
+  //fflush(stdout);
+
   const int numTilesX = (width +TILE_SIZE_X-1)/TILE_SIZE_X;
   const int numTilesY = (height+TILE_SIZE_Y-1)/TILE_SIZE_Y;
+
+  // Calculate the number of pixels there are
+  int numPixels = height * width;
+  
+  // Allocate space for the batch of rays
+  Ray *batch;
+  batch = (Ray*) malloc(numPixels * sizeof(Ray));
+  
+  if(batch == NULL)
+  {
+    printf("Error! memory for batch not allocated.");
+    exit(0);
+  }
+
+  printf("\nMemory allocated!\n");
+  printf("Width: %d\n", width);
+  printf("Height: %d\n", height);
+  printf("numPixels: %d\n", height*width);
+  printf("sizeof(Ray): %d\n", sizeof(Ray));
+  fflush(stdout);
+ 
+  /* Create batch of samplers
+   *  This is required if we want to continue to render the image. We can create the
+   *  initial rays without this, but the original algorithm uses the sampler for 
+   */ 
   parallel_for(size_t(0),size_t(numTilesX*numTilesY),[&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
     for (size_t i=range.begin(); i<range.end(); i++)
+	  batchTileTask((int)i, threadIndex, batch, width, height, time, camera, numTilesX, numTilesY);
+  });
+
+  free(batch); // This is temp clean up
+  
+  /* render image */
+  parallel_for(size_t(0),size_t(numTilesX*numTilesY),[&](const range<size_t>& range) {
+    const int threadIndex = (int)TaskScheduler::threadIndex();
+    for (size_t i=range.begin(); i<range.end(); i++)
+	  // Need to replace this with a generateBatch function
       renderTileTask((int)i,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
   }); 
+  
   //rtcDebug();
 } // device_render
 
