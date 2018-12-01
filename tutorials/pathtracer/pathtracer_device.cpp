@@ -31,6 +31,14 @@ using namespace std::chrono;
 // Added ISPC function
 #include "benchmark_wrapper.h"
 
+// Adding a struct for good luck
+// TODO
+struct batchedRay {
+  Ray ray;
+  int valid = 1;  
+};
+
+
 namespace embree {
 
 #undef TILE_SIZE_X
@@ -1976,19 +1984,27 @@ void colorBatchTask (int taskIndex,
                       Vec3fa& L,
                       Vec3fa& Lw,
                       DifferentialGeometry& dg,
-                      Medium& medium)
+                      Medium& medium,
+                      int& validRay)
 {
-  /* terminate if contribution too low */
+  //IntersectContext context;
+  //InitIntersectionContext(&context);    
+  //context.context.flags = g_iflags_incoherent;
+
+  //Medium medium = make_Medium_Vacuum();
+
+  //DifferentialGeometry dg;
+  
+ /* terminate if contribution too low */
   if (max(Lw.x,max(Lw.y,Lw.z)) < 0.01f)
   {
-    // TODO: setting the ray geo is a hack for finding completed rays
-    ray.geomID = RTC_INVALID_GEOMETRY_ID;
+    validRay = 0;
     return;
   }
   
   //This may need to be adjusted
   RandomSampler sampler;
-  RandomSampler_init(sampler, (int)taskIndex, (int)threadIndex, g_accu_count*g_spp);
+  RandomSampler_init(sampler, (int)taskIndex, (int)threadIndex, g_accu_count*g_spp+taskIndex);
   float time = RandomSampler_get1D(sampler);
     
   const Vec3fa wo = neg(ray.dir);
@@ -2003,7 +2019,7 @@ void colorBatchTask (int taskIndex,
       Light_EvalRes le = l->eval(l,dg,ray.dir);
       L = L + Lw*le.value;
     }
-
+    validRay = 0;
     return;
   }
 
@@ -2028,60 +2044,67 @@ void colorBatchTask (int taskIndex,
   if (ne(transmission,Vec3fa(1.0f)))
     c = c * pow(transmission, ray.tfar);
 
-    /* calculate BRDF */
-    BRDF brdf;
-    int numMaterials = g_ispc_scene->numMaterials;
-    ISPCMaterial** material_array = &g_ispc_scene->materials[0];
-    Material__preprocess(material_array, materialID, numMaterials, brdf, wo, dg, medium);
+  /* calculate BRDF */
+  BRDF brdf;
+  int numMaterials = g_ispc_scene->numMaterials;
+  ISPCMaterial** material_array = &g_ispc_scene->materials[0];
+  Material__preprocess(material_array, materialID, numMaterials, brdf, wo, dg, medium);
 
-    /* sample BRDF at hit point */
-    Sample3f wi1;
-    c = c * Material__sample(material_array, materialID, numMaterials, brdf, Lw, wo, dg, wi1, medium, RandomSampler_get2D(sampler));
+  /* sample BRDF at hit point */
+  Sample3f wi1;
+  c = c * Material__sample(material_array, materialID, numMaterials, brdf, Lw, wo, dg, wi1, medium, RandomSampler_get2D(sampler));
 
-    /* iterate over lights */
-    context.context.flags = g_iflags_incoherent;
-    for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
-    {
-      const Light* l = g_ispc_scene->lights[i];
-      Light_SampleRes ls = l->sample(l,dg,RandomSampler_get2D(sampler));
-      if (ls.pdf <= 0.0f) continue;
+  /* iterate over lights */
+  context.context.flags = g_iflags_incoherent;
+  for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
+  {
+    const Light* l = g_ispc_scene->lights[i];
+    Light_SampleRes ls = l->sample(l,dg,RandomSampler_get2D(sampler));
+    if (ls.pdf <= 0.0f) continue;
       Vec3fa transparency = Vec3fa(1.0f);
       Ray shadow(dg.P,ls.dir,dg.eps,ls.dist,time);
       context.userRayExt = &transparency;
       rtcOccluded1(g_scene,&context.context,RTCRay_(shadow));
-      //RayStats_addShadowRay(stats);
 
       if (max(max(transparency.x,transparency.y),transparency.z) > 0.0f)
         L = L + Lw * ls.weight * transparency * Material__eval(material_array, materialID, numMaterials, brdf, wo, dg, ls.dir);
-    }
 
     // wil.pdf is  a float. Maybe we just return this value and compare it outside?
     if (wi1.pdf <= 1E-4f /* 0.0f */)
-    {
-      // TODO: setting the ray geo is a hack for finding completed rays
-      ray.geomID = RTC_INVALID_GEOMETRY_ID;
+    { 
+      validRay = 0;
       return;
     }
+  }
 
-    Lw = Lw*c/wi1.pdf;
-
-    /* setup secondary ray */
-    float sign = dot(wi1.v,dg.Ng) < 0.0f ? -1.0f : 1.0f;
-    dg.P = dg.P + sign*dg.eps*dg.Ng;
-    init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
+  Lw = Lw*c/wi1.pdf;
+    
+  /* setup secondary ray */
+  float sign = dot(wi1.v,dg.Ng) < 0.0f ? -1.0f : 1.0f;
+  dg.P = dg.P + sign*dg.eps*dg.Ng;
+  //init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
 }
 
+/************************************************************************************************/
+/* This task is used to isolate the intersection function. After all the rays are batched, they
+/*  are evenly distributed among the available threads which use this task to perform the
+/*  intersection calculations.
+/************************************************************************************************/
 void intersectBatchTask (int taskIndex,
                          int threadIndex, 
-                         Ray* batch,
+                         batchedRay* batch,
                          IntersectContext* context)
 {
   /* intersect ray with scene */
-  rtcIntersect1(g_scene,&context[taskIndex].context, RTCRayHit_(batch[taskIndex]));
+  rtcIntersect1(g_scene,&context[taskIndex].context, RTCRayHit_(batch[taskIndex].ray));
   RayStats_addRay(g_stats[threadIndex]);
 }
 
-void batchTileTask (int taskIndex, int threadIndex, Ray* batch,
+/************************************************************************************************/
+/* After the scene has been divided into tiles, each thread is tasked with creating a ray per
+/*  pixel. For now, we do not support a spp (sample per pixel) greater than one.
+/************************************************************************************************/
+void batchTileTask (int taskIndex, int threadIndex, batchedRay* batch,
                       const unsigned int width,
                       const unsigned int height,
                       const float time, // TODO: Get rid of this
@@ -2117,11 +2140,9 @@ void batchTileTask (int taskIndex, int threadIndex, Ray* batch,
 	ray.id = y * width + x;
 
 	// Store the ray into the batch where the index represents the pixel position in the frame
-	batch[y * width + x] = ray;
+	batch[y * width + x].ray = ray;
   }
 }
-
-
 
 // ================================================================================================================================
 // ================================================================================================================================
@@ -2262,14 +2283,16 @@ extern "C" void device_render (int* pixels,
   int batchSize = height * width;
   
   /* Allocate space for the initial batch of rays */
-  Ray *batch;
+  /*Ray *batch;
   batch = (Ray*) malloc(batchSize * sizeof(Ray));
   // If this is NULL, something is very, very wrong.
   if(batch == NULL)
   {
     printf("Error! memory for the initial batch not allocated.");
     exit(0);
-  }
+  }*/
+  
+  std::vector<batchedRay> batch(batchSize);
   
   /* Create batch of rays
    *  This loop uses as many threads as are available to create the initial batch of rays.
@@ -2277,7 +2300,7 @@ extern "C" void device_render (int* pixels,
   parallel_for(size_t(0),size_t(numTilesX*numTilesY),[&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
     for (size_t i=range.begin(); i<range.end(); i++)
-	  batchTileTask((int)i, threadIndex, batch, width, height, time, camera, numTilesX, numTilesY);
+	  batchTileTask((int)i, threadIndex, batch.data(), width, height, time, camera, numTilesX, numTilesY);
   });
 
   
@@ -2336,28 +2359,23 @@ extern "C" void device_render (int* pixels,
   }
   
   
-  
-  /* Allocate space for context map */
-  IntersectContext *context;
-
-  context = (IntersectContext*) malloc(batchSize * sizeof(IntersectContext));
-  // If this is NULL, something is very, very wrong.
-  if(context == NULL)
-  {
-    printf("Error! memory for the initial contexts not allocated.");
-    exit(0);
-  }
-  
-  // Initialize the contexts
-  for(int i = 0; i < batchSize; ++i)
-  {
-    InitIntersectionContext(&context[i]);
-    context[i].context.flags = g_iflags_coherent;
-  }
-  
+    
   /* Start of for-loop to trace the rays */
   for (int bounce = 0; bounce < g_max_path_length; ++bounce)
   { 
+    //printf("\n For bounce %d\n",bounce);
+    //printf("Batch side: %d\n", batchSize);
+    //fflush(stdout);
+    
+    // For some reason, I had to use malloc... no other option here.
+    IntersectContext *context;
+    context = (IntersectContext*) malloc(batchSize * sizeof(IntersectContext));
+    for(int index = 0; index < batchSize; ++index)
+    {
+      InitIntersectionContext(&context[index]);
+      context[index].context.flags = (index == 0) ? g_iflags_coherent : g_iflags_incoherent;
+    }
+
     /* Perform intersection calculations
      * This loop performs the intersection calculations. This will be what we benchmark.
      */
@@ -2365,7 +2383,7 @@ extern "C" void device_render (int* pixels,
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t i=range.begin(); i<range.end(); i++)
-	    intersectBatchTask ((int)i, threadIndex, batch, context);
+	    intersectBatchTask ((int)i, threadIndex, batch.data(), context);
     });
     //auto stop = high_resolution_clock::now();
     //auto duration = duration_cast<microseconds>(stop - start);
@@ -2375,80 +2393,42 @@ extern "C" void device_render (int* pixels,
     /* This loop goes through all the rays in the batch and calculates the ray's contribution to the
     /*  scene. It is based primarily on `renderPixelFunction` from Embree's pathtracer.
     /**********************************************************************************************/
-	parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
+    //printf("This is test point - 1\n");
+    //fflush(stdout);
+   	parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t i=range.begin(); i<range.end(); i++)
-	    colorBatchTask ((int)i, threadIndex, batch[i], context[i], L[batch[i].id], Lw[batch[i].id], dg[batch[i].id], medium[batch[i].id]);
+	    colorBatchTask ((int)i, threadIndex, batch[i].ray, context[i], L[batch[i].ray.id], Lw[batch[i].ray.id], dg[batch[i].ray.id], medium[batch[i].ray.id], batch[i].valid);
     });
-    
+    //printf("This is test point - 2\n");
+    //fflush(stdout);
     /**********************************************************************************************/
     /* This part of the code is still a work in progress. The idea is that now that we have finished
     /*  processing the previous batch, we need to form the next batch. This means we need to create
     /*  a new ray batch and its respective context for use in the next iteration. In the future, we
     /*  should probably turn this into a respectable piece of code.
     /**********************************************************************************************/
+    free(context);
+    
 	// For rays that are left, they need to be formed into a new batch and sent back to the top of
 	//	the loop.
     volatile int newBatchSize = 0;
     
-    // This is a simple loop to determine how large the next batch will be...
-    for(int batchIndex = 0; batchIndex < batchSize; ++batchIndex)
-    {
-      if (batch[batchIndex].geomID != RTC_INVALID_GEOMETRY_ID)
-      {
-          newBatchSize++;
-      }
-    }
+    batch.erase(
+        std::remove_if(batch.begin(), batch.end(), [&](batchedRay const & batch) {
+            return batch.valid == 0;
+            }),
+            batch.end());
     
-    // If there are no more valid rays, we are done.
-    if(newBatchSize == 0)
-      break;
-    
-    // Free the "context" memory. We will be making a new one with the new batch.
-    free(context);
-    
-    /* Create a new context array */
-    context = (IntersectContext*) malloc(batchSize * sizeof(IntersectContext));
-    // If this is NULL, something is very, very wrong.
-    if(context == NULL)
-    {
-      printf("Error! memory for the bounce %d contexts not allocated.", bounce + 1);
-      exit(0);
-    }
-    
-    /* Create a holder for the next batch of rays */
-    Ray *newBatch;
-    newBatch = (Ray*)malloc(newBatchSize * sizeof(Ray));
-    // If this is NULL, something is very, very wrong.
-    if(newBatch == NULL)
-    {
-      printf("Error! memory for the bounce %d batch not allocated.", bounce + 1);
-      exit(0);
-    }
-
-    // Now, we get to loop through this again but this time pulling out the valid
-    //  rays and storing them in their new space in memory.
-    volatile int newBatchIndex = 0;
-    for(int batchIndex = 0; batchIndex < batchSize; ++batchIndex)
-    {
-      if (batch[batchIndex].geomID != RTC_INVALID_GEOMETRY_ID)
-      {
-        // Create new ray batch
-        newBatch[newBatchIndex] = batch[batchIndex];
-        
-        // Initialize the new context
-        InitIntersectionContext(&context[newBatchIndex]);
-        context[newBatchIndex].context.flags = g_iflags_incoherent;
-        
-        //Increment the newBatchIndex
-        ++newBatchIndex;
-      }
-    }
+    if(batch.empty())
+        break;
     
     //Clean up the batch memory
-    free(batch);
-    batch = newBatch;
-    batchSize = newBatchSize;
+    // TODO: Update comment
+    batchSize = batch.size();
+    
+    //printf("Next batch size = %d\n", batchSize);
+    //fflush(stdout);
   } /* End of ray-trace for-loop */
 
 
@@ -2461,11 +2441,11 @@ extern "C" void device_render (int* pixels,
   }); */
   
   // Clean up any unused memory
-  free(batch);
-  free(context);
   alignedFree(Lw);
   free(medium);
   free(dg);
+  
+  //printf("\n COLOR BATCH \n");
   
   /************************************************************************************************/
   /* Use the color values (L) calculated above to shade the pixels. Based on `renderTileStandard`
