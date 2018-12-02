@@ -1773,7 +1773,6 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
 // Struct to organize data
 // TODO: Add comments to explain variables
 struct batchedRay {
-  Ray ray;
   RandomSampler sampler;
   float time;
   Vec3fa Lw = Vec3fa(1.0f);
@@ -1921,7 +1920,8 @@ void colorPixelsTask(int taskIndex,
 // ***************************************************************************//
 void batchTileTask (int taskIndex,
                       int threadIndex,
-                      batchedRay* batch,
+                      Ray* rays,
+                      batchedRay* rayData,
                       const unsigned int width,
                       const unsigned int height,
                       const float time, // TODO: Get rid of this
@@ -1943,26 +1943,26 @@ void batchTileTask (int taskIndex,
     unsigned int batch_index = y * width + x;
 
 	// RandomSampler is used to generate random numbers
-	RandomSampler_init(batch[batch_index].sampler, (int)x, (int)y, g_accu_count);
+	RandomSampler_init(rayData[batch_index].sampler, (int)x, (int)y, g_accu_count);
 	
 	// Apply the randomization for the ray inputs
-	float fx = x + RandomSampler_get1D(batch[batch_index].sampler);
-    float fy = y + RandomSampler_get1D(batch[batch_index].sampler);
-	batch[batch_index].time = RandomSampler_get1D(batch[batch_index].sampler);
+	float fx = x + RandomSampler_get1D(rayData[batch_index].sampler);
+    float fy = y + RandomSampler_get1D(rayData[batch_index].sampler);
+	rayData[batch_index].time = RandomSampler_get1D(rayData[batch_index].sampler);
 
 	// Generate the ray
 	Ray ray(Vec3fa(camera.xfm.p),
-                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,batch[batch_index].time);
+                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,rayData[batch_index].time);
 					 
 	// assign the index value to the ray.id to be used to map ray to pixel
-    batch[batch_index].pixel = batch_index;
+    rayData[batch_index].pixel = batch_index;
 
 	// Store the ray into the batch where the index represents the pixel position in the frame
-	batch[batch_index].ray = ray;
+	rays[batch_index] = ray;
     
     // NOTE: Nothing I try is able to get this to work. When I test it later,
     //  the value stored here does not match what I store in the pixel value.
-    //batch[batch_index].ray.id = batch_index;
+    //rays[batch_index].id = batch_index;
   }
 }
 
@@ -2121,7 +2121,7 @@ extern "C" void device_render (int* pixels,
   
   // Create the holders for the initial batch
   std::vector<Ray> rays(numPixels);
-  std::vector<batchedRay> batch(numPixels);
+  std::vector<batchedRay> rayData(numPixels);
   
   // Create the initial batch size
   int batchSize = numPixels;
@@ -2132,7 +2132,7 @@ extern "C" void device_render (int* pixels,
   parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
     for (size_t i=range.begin(); i<range.end(); i++)
-	  batchTileTask((int)i, threadIndex, batch.data(), width, height, time, camera, numTilesX, numTilesY);
+	  batchTileTask((int)i, threadIndex, rays.data(), rayData.data(), width, height, time, camera, numTilesX, numTilesY);
   });
 
   // ************************************************************************ //
@@ -2154,8 +2154,8 @@ extern "C" void device_render (int* pixels,
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t i=range.begin(); i<range.end(); i++)
       {
-        InitIntersectionContext(&batch[i].context);
-        batch[i].context.context.flags = (bounce == 0) ? g_iflags_coherent : g_iflags_incoherent;
+        InitIntersectionContext(&rayData[i].context);
+        rayData[i].context.context.flags = (bounce == 0) ? g_iflags_coherent : g_iflags_incoherent;
       }
     });
 
@@ -2167,8 +2167,8 @@ extern "C" void device_render (int* pixels,
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t i=range.begin(); i<range.end(); i++)
       {
-        rtcIntersect1(g_scene,&batch[i].context.context,RTCRayHit_(batch[i].ray));
-        RayStats_addRay(g_stats[0]);
+        rtcIntersect1(g_scene,&rayData[i].context.context,RTCRayHit_(rays[i]));
+        RayStats_addRay(g_stats[threadIndex]);
       }
     });
  
@@ -2182,28 +2182,28 @@ extern "C" void device_render (int* pixels,
       for (size_t taskIndex=range.begin(); taskIndex<range.end(); taskIndex++)
       {  
         // This just makes the code a little cleaner
-        int myIndex = batch[taskIndex].pixel;
+        int myIndex = rayData[taskIndex].pixel;
 
         // Calling this function populates the L value with the proper color of
         //  the pixel.
-        renderPixelBacthFunction(batch[taskIndex].ray,
-                                  batch[taskIndex].sampler,
-                                  batch[taskIndex].time,
-                                  batch[taskIndex].Lw,
-                                  batch[taskIndex].medium,
-                                  batch[taskIndex].dg,
+        renderPixelBacthFunction(rays[taskIndex],
+                                  rayData[taskIndex].sampler,
+                                  rayData[taskIndex].time,
+                                  rayData[taskIndex].Lw,
+                                  rayData[taskIndex].medium,
+                                  rayData[taskIndex].dg,
                                   L[myIndex],
                                   camera,
                                   g_stats[threadIndex],
-                                  batch[taskIndex].context,
-                                  batch[taskIndex].valid);
+                                  rayData[taskIndex].context,
+                                  rayData[taskIndex].valid);
         
         // If the ray is no longer contributing (significantly) to the coloring of
         //  the pixel, we can stop processing it.
         // NOTE: Lw is a weight value
-        if (max(batch[taskIndex].Lw.x,max(batch[taskIndex].Lw.y,batch[taskIndex].Lw.z)) < 0.01f)
+        if (max(rayData[taskIndex].Lw.x,max(rayData[taskIndex].Lw.y,rayData[taskIndex].Lw.z)) < 0.01f)
         {
-          batch[taskIndex].valid = 0;
+          rayData[taskIndex].valid = 0;
         }
       }
     });
@@ -2218,24 +2218,33 @@ extern "C" void device_render (int* pixels,
     //  Doing it this way allows us to use one vector to remove elements from
     //  another. While the order of the vector is not guaranteed, both vectors
     //  should remain relatively synchronized.
-    auto first = batch.begin();
-    auto result = batch.begin();
-    while (first != batch.end()) {
-      if(!(first->valid == 0))
+    auto firstRayData = rayData.begin();
+    auto resultRayData = rayData.begin();
+    
+    auto firstRays = rays.begin();
+    auto resultRays = rays.begin();
+    
+    while (firstRayData != rayData.end()) {
+      if(!(firstRayData->valid == 0))
       {
-        *result = std::move(*first);
-        ++result;
+        *resultRayData = std::move(*firstRayData);
+        ++resultRayData;
+        
+        *resultRays = std::move(*firstRays);
+        ++resultRays;
       }
-      ++first;
+      ++firstRayData;
+      ++firstRays;
     }
-    batch.erase(result, batch.end());
+    rayData.erase(resultRayData, rayData.end());
+    rays.erase(resultRays, rays.end());
 
     // If there are no more rays, then we can color the scene.
-    if(batch.empty())
+    if(rays.empty())
         break;
     
     // Update the batchSize for the next loop iteration.
-    batchSize = batch.size();
+    batchSize = rays.size();
   }
 
   // ************************************************************************ //
