@@ -1782,7 +1782,7 @@ struct batchedRay {
 // ================================================================================================================================
 // ================================================================================================================================
 
-Vec3fa renderPixelBacthFunction(Ray& ray,
+void renderPixelBacthFunction(Ray& ray,
                                 RandomSampler& sampler,
                                 float& time,
                                 Vec3fa& Lw,
@@ -1790,22 +1790,25 @@ Vec3fa renderPixelBacthFunction(Ray& ray,
                                 DifferentialGeometry& dg,
                                 Vec3fa& L,
                                 const ISPCCamera& camera,
-                                RayStats& stats)
-{
-  /* radiance accumulator and weight */
-  //Vec3fa L = Vec3fa(0.0f);
-  
+                                RayStats& stats,
+                                const int& index,
+                                int& valid)
+{  
   /* iterative path tracer loop */
-  for (int i=0; i<g_max_path_length; i++)
-  {
+  //for (int i=0; i<g_max_path_length; i++)
+  //{
     /* terminate if contribution too low */
-    if (max(Lw.x,max(Lw.y,Lw.z)) < 0.01f)
-      break;
-
+    //if (max(Lw.x,max(Lw.y,Lw.z)) < 0.01f)
+    //{
+     //  valid = 0;
+      // return;
+      //break;
+    //}
+      
     /* intersect ray with scene */
     IntersectContext context;
     InitIntersectionContext(&context);
-    context.context.flags = (i == 0) ? g_iflags_coherent : g_iflags_incoherent;
+    context.context.flags = (index == 0) ? g_iflags_coherent : g_iflags_incoherent;
     rtcIntersect1(g_scene,&context.context,RTCRayHit_(ray));
     RayStats_addRay(stats);
     const Vec3fa wo = neg(ray.dir);
@@ -1823,7 +1826,9 @@ Vec3fa renderPixelBacthFunction(Ray& ray,
         L = L + Lw*le.value;
       }
 
-      break;
+      valid = 0;
+      return;
+      //break;
     }
 
     Vec3fa Ns = normalize(ray.Ng);
@@ -1874,62 +1879,19 @@ Vec3fa renderPixelBacthFunction(Ray& ray,
         L = L + Lw*ls.weight*transparency*Material__eval(material_array,materialID,numMaterials,brdf,wo,dg,ls.dir);
     }
 
-    if (wi1.pdf <= 1E-4f /* 0.0f */) break;
+    if (wi1.pdf <= 1E-4f /* 0.0f */)
+    {
+      valid = 0;
+      return;
+      //break;
+    }
     Lw = Lw*c/wi1.pdf;
 
     /* setup secondary ray */
     float sign = dot(wi1.v,dg.Ng) < 0.0f ? -1.0f : 1.0f;
     dg.P = dg.P + sign*dg.eps*dg.Ng;
     init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
-  }
-}
-
-/* renders a single screen tile */
-void renderBatchStandard(int taskIndex,
-                        int threadIndex,
-                        int* pixels,
-                        const unsigned int width,
-                        const unsigned int height,
-                        const float time,
-                        const ISPCCamera& camera,
-                        const int numTilesX,
-                        const int numTilesY,
-                        batchedRay* batch,
-                        Vec3fa* L)
-{
-  const unsigned int tileY = taskIndex / numTilesX;
-  const unsigned int tileX = taskIndex - tileY * numTilesX;
-  const unsigned int x0 = tileX * TILE_SIZE_X;
-  const unsigned int x1 = min(x0+TILE_SIZE_X,width);
-  const unsigned int y0 = tileY * TILE_SIZE_Y;
-  const unsigned int y1 = min(y0+TILE_SIZE_Y,height);
-
-  for (unsigned int y=y0; y<y1; y++) for (unsigned int x=x0; x<x1; x++)
-  {
-    renderPixelBacthFunction(batch[y*width+x].ray,
-                                      batch[y*width+x].sampler,
-                                      batch[y*width+x].time,
-                                      batch[y*width+x].Lw,
-                                      batch[y*width+x].medium,
-                                      batch[y*width+x].dg,
-                                      L[y*width+x],
-                                      camera,
-                                      g_stats[threadIndex]);
-  }
-}
-
-/* task that renders a single screen tile */
-void renderBatchTask (int taskIndex, int threadIndex, int* pixels,
-                         const unsigned int width,
-                         const unsigned int height,
-                         const float time,
-                         const ISPCCamera& camera,
-                         const int numTilesX,
-                         const int numTilesY,
-                         batchedRay* batch,
-                         Vec3fa* L)
-{
-  renderBatchStandard(taskIndex,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY, batch, L);
+  //}
 }
 
 // ================================================================================================================================
@@ -2295,11 +2257,38 @@ extern "C" void device_render (int* pixels,
 	  batchTileTask((int)i, threadIndex, batch.data(), width, height, time, camera, numTilesX, numTilesY);
   });
 
-  parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
-    const int threadIndex = (int)TaskScheduler::threadIndex();
-    for (size_t i=range.begin(); i<range.end(); i++)
-	  renderBatchTask((int)i,threadIndex, pixels, width, height, time, camera, numTilesX, numTilesY, batch.data(), L);
-  });
+  //parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
+  //  const int threadIndex = (int)TaskScheduler::threadIndex();
+  //  for (size_t i=range.begin(); i<range.end(); i++)
+  //	  renderBatchTask((int)i,threadIndex, pixels, width, height, time, camera, numTilesX, numTilesY, batch.data(), L);
+  //});
+  
+
+  for (int i=0; i<g_max_path_length; i++)
+  {
+    for (unsigned int y = 0; y < height; ++y) for (unsigned int x = 0; x < width; ++x)
+    {
+      if(batch[y*width+x].valid == 1)
+      {
+        renderPixelBacthFunction(batch[y*width+x].ray,
+                                      batch[y*width+x].sampler,
+                                      batch[y*width+x].time,
+                                      batch[y*width+x].Lw,
+                                      batch[y*width+x].medium,
+                                      batch[y*width+x].dg,
+                                      L[y*width+x],
+                                      camera,
+                                      g_stats[0],
+                                      i,
+                                      batch[y*width+x].valid);
+        
+        if (max(batch[y*width+x].Lw.x,max(batch[y*width+x].Lw.y,batch[y*width+x].Lw.z)) < 0.01f)
+        {
+          batch[y*width+x].valid = 0;
+        }
+      }
+    }
+  }
 
   parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
