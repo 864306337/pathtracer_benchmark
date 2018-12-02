@@ -1774,7 +1774,8 @@ struct batchedRay {
   Vec3fa Lw = Vec3fa(1.0f);
   Medium medium = make_Medium_Vacuum();
   DifferentialGeometry dg;
-  int valid = 1;  
+  int valid = 1; 
+  IntersectContext context; 
 };
 
 // ================================================================================================================================
@@ -1791,26 +1792,12 @@ void renderPixelBacthFunction(Ray& ray,
                                 Vec3fa& L,
                                 const ISPCCamera& camera,
                                 RayStats& stats,
-                                const int& index,
+                                IntersectContext& context,
                                 int& valid)
-{  
-  /* iterative path tracer loop */
-  //for (int i=0; i<g_max_path_length; i++)
-  //{
-    /* terminate if contribution too low */
-    //if (max(Lw.x,max(Lw.y,Lw.z)) < 0.01f)
-    //{
-     //  valid = 0;
-      // return;
-      //break;
-    //}
-      
-    /* intersect ray with scene */
-    IntersectContext context;
-    InitIntersectionContext(&context);
-    context.context.flags = (index == 0) ? g_iflags_coherent : g_iflags_incoherent;
-    rtcIntersect1(g_scene,&context.context,RTCRayHit_(ray));
-    RayStats_addRay(stats);
+{
+    //rtcIntersect1(g_scene,&context.context,RTCRayHit_(ray));
+    //RayStats_addRay(stats);
+    
     const Vec3fa wo = neg(ray.dir);
 
     /* invoke environment lights if nothing hit */
@@ -2264,12 +2251,30 @@ extern "C" void device_render (int* pixels,
   //});
   
 
-  for (int i=0; i<g_max_path_length; i++)
+  for (int bounce = 0; bounce < g_max_path_length; bounce++)
   {
+    parallel_for(size_t(0),size_t(numPixels),[&](const range<size_t>& range) {
+      const int threadIndex = (int)TaskScheduler::threadIndex();
+      for (size_t i=range.begin(); i<range.end(); i++)
+      {
+        InitIntersectionContext(&batch[i].context);
+        batch[i].context.context.flags = (bounce == 0) ? g_iflags_coherent : g_iflags_incoherent;
+      }
+    });
+
+    parallel_for(size_t(0),size_t(numPixels),[&](const range<size_t>& range) {
+      const int threadIndex = (int)TaskScheduler::threadIndex();
+      for (size_t i=range.begin(); i<range.end(); i++)
+      {
+        rtcIntersect1(g_scene,&batch[i].context.context,RTCRayHit_(batch[i].ray));
+        RayStats_addRay(g_stats[0]);
+      }
+    });
+    
     for (unsigned int y = 0; y < height; ++y) for (unsigned int x = 0; x < width; ++x)
     {
       if(batch[y*width+x].valid == 1)
-      {
+      {                
         renderPixelBacthFunction(batch[y*width+x].ray,
                                       batch[y*width+x].sampler,
                                       batch[y*width+x].time,
@@ -2279,7 +2284,7 @@ extern "C" void device_render (int* pixels,
                                       L[y*width+x],
                                       camera,
                                       g_stats[0],
-                                      i,
+                                      batch[y*width+x].context,
                                       batch[y*width+x].valid);
         
         if (max(batch[y*width+x].Lw.x,max(batch[y*width+x].Lw.y,batch[y*width+x].Lw.z)) < 0.01f)
