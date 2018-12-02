@@ -31,16 +31,10 @@ using namespace std::chrono;
 // Added ISPC function
 #include "benchmark_wrapper.h"
 
-// Adding a struct for good luck
-// TODO
-struct batchedRay {
-  Ray ray;
-  int valid = 1;  
-};
+
 
 
 namespace embree {
-
 #undef TILE_SIZE_X
 #undef TILE_SIZE_Y
 
@@ -1771,30 +1765,36 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
 }
 
 
-
-// ================================================================================================================================
-// ================================================================================================================================
-// ================================================================================================================================
-// ================================================================================================================================
-
-
-
-Vec3fa renderBatchFunction(Ray batch_ray, float x, float y, RandomSampler& sampler, const ISPCCamera& camera, RayStats& stats)
-{
-  // Basic ISPC test
-  //ispc::benchmark_wrapper();
-
-  /* radiance accumulator and weight */
-  Vec3fa L = Vec3fa(0.0f);
+// Adding a struct for good luck
+// TODO
+struct batchedRay {
+  Ray ray;
+  RandomSampler sampler;
+  float time;
   Vec3fa Lw = Vec3fa(1.0f);
   Medium medium = make_Medium_Vacuum();
-  float time = RandomSampler_get1D(sampler);
-
-  /* initialize ray */
-  Ray ray = batch_ray;
-
   DifferentialGeometry dg;
- 
+  int valid = 1;  
+};
+
+// ================================================================================================================================
+// ================================================================================================================================
+// ================================================================================================================================
+// ================================================================================================================================
+
+Vec3fa renderPixelBacthFunction(Ray& ray,
+                                RandomSampler& sampler,
+                                float& time,
+                                Vec3fa& Lw,
+                                Medium& medium,
+                                DifferentialGeometry& dg,
+                                Vec3fa& L,
+                                const ISPCCamera& camera,
+                                RayStats& stats)
+{
+  /* radiance accumulator and weight */
+  //Vec3fa L = Vec3fa(0.0f);
+  
   /* iterative path tracer loop */
   for (int i=0; i<g_max_path_length; i++)
   {
@@ -1882,38 +1882,20 @@ Vec3fa renderBatchFunction(Ray batch_ray, float x, float y, RandomSampler& sampl
     dg.P = dg.P + sign*dg.eps*dg.Ng;
     init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
   }
-  return L;
 }
 
-Vec3fa renderBatchStandard(Ray ray, float x, float y, const ISPCCamera& camera, RayStats& stats)
-{
-  RandomSampler sampler;
-
-  Vec3fa L = Vec3fa(0.0f);
-
-  for (int i=0; i<g_spp; i++)
-  {
-    RandomSampler_init(sampler, (int)x, (int)y, g_accu_count*g_spp+i);
-
-    /* calculate pixel color */
-    float fx = x + RandomSampler_get1D(sampler);
-    float fy = y + RandomSampler_get1D(sampler);
-    L = L + renderBatchFunction(ray, fx,fy,sampler,camera,stats);
-  }
-  L = L/(float)g_spp;
-  return L;
-}
-
-void renderBatchTask(int taskIndex,
+/* renders a single screen tile */
+void renderBatchStandard(int taskIndex,
                         int threadIndex,
                         int* pixels,
-						Ray* batch,
                         const unsigned int width,
                         const unsigned int height,
                         const float time,
                         const ISPCCamera& camera,
                         const int numTilesX,
-                        const int numTilesY)
+                        const int numTilesY,
+                        batchedRay* batch,
+                        Vec3fa* L)
 {
   const unsigned int tileY = taskIndex / numTilesX;
   const unsigned int tileX = taskIndex - tileY * numTilesX;
@@ -1924,26 +1906,36 @@ void renderBatchTask(int taskIndex,
 
   for (unsigned int y=y0; y<y1; y++) for (unsigned int x=x0; x<x1; x++)
   {
-    /* calculate pixel color */
-    Vec3fa color = renderBatchStandard(batch[y*width+x],(float)x,(float)y,camera,g_stats[threadIndex]);
-
-    /* write color to framebuffer */
-    Vec3fa accu_color = g_accu[y*width+x] + Vec3fa(color.x,color.y,color.z,1.0f); g_accu[y*width+x] = accu_color;
-    float f = rcp(max(0.001f,accu_color.w));
-    unsigned int r = (unsigned int) (255.01f * clamp(accu_color.x*f,0.0f,1.0f));
-    unsigned int g = (unsigned int) (255.01f * clamp(accu_color.y*f,0.0f,1.0f));
-    unsigned int b = (unsigned int) (255.01f * clamp(accu_color.z*f,0.0f,1.0f));
-    pixels[y*width+x] = (b << 16) + (g << 8) + r;
+    renderPixelBacthFunction(batch[y*width+x].ray,
+                                      batch[y*width+x].sampler,
+                                      batch[y*width+x].time,
+                                      batch[y*width+x].Lw,
+                                      batch[y*width+x].medium,
+                                      batch[y*width+x].dg,
+                                      L[y*width+x],
+                                      camera,
+                                      g_stats[threadIndex]);
   }
 }
 
+/* task that renders a single screen tile */
+void renderBatchTask (int taskIndex, int threadIndex, int* pixels,
+                         const unsigned int width,
+                         const unsigned int height,
+                         const float time,
+                         const ISPCCamera& camera,
+                         const int numTilesX,
+                         const int numTilesY,
+                         batchedRay* batch,
+                         Vec3fa* L)
+{
+  renderBatchStandard(taskIndex,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY, batch, L);
+}
 
-
 // ================================================================================================================================
 // ================================================================================================================================
 // ================================================================================================================================
 // ================================================================================================================================
-
 
 
 void colorPixelsTask(int taskIndex,
@@ -1985,104 +1977,95 @@ void colorBatchTask (int taskIndex,
                       Vec3fa& Lw,
                       DifferentialGeometry& dg,
                       Medium& medium,
-                      int& validRay)
-{
-  //IntersectContext context;
-  //InitIntersectionContext(&context);    
-  //context.context.flags = g_iflags_incoherent;
-
-  //Medium medium = make_Medium_Vacuum();
-
-  //DifferentialGeometry dg;
-  
+                      int& validRay,
+                      RandomSampler& sampler,
+                      float& time)
+{  
  /* terminate if contribution too low */
-  if (max(Lw.x,max(Lw.y,Lw.z)) < 0.01f)
-  {
-    validRay = 0;
-    return;
-  }
-  
-  //This may need to be adjusted
-  RandomSampler sampler;
-  RandomSampler_init(sampler, (int)taskIndex, (int)threadIndex, g_accu_count*g_spp+taskIndex);
-  float time = RandomSampler_get1D(sampler);
+    if (max(Lw.x,max(Lw.y,Lw.z)) < 0.01f)
+    {
+      validRay = 0;
+      return;
+    }
     
   const Vec3fa wo = neg(ray.dir);
   
-  /* invoke environment lights if nothing hit */
-  if (ray.geomID == RTC_INVALID_GEOMETRY_ID)
-  {
-    /* iterate over all lights */
+    /* invoke environment lights if nothing hit */
+    if (ray.geomID == RTC_INVALID_GEOMETRY_ID)
+    {
+      //L = L + Lw*Vec3fa(1.0f);
+
+      /* iterate over all lights */
+      for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
+      {
+        const Light* l = g_ispc_scene->lights[i];
+        Light_EvalRes le = l->eval(l,dg,ray.dir);
+        L = L + Lw*le.value;
+      }
+
+      validRay = 0;
+     return;
+    }
+
+    Vec3fa Ns = normalize(ray.Ng);
+
+    /* compute differential geometry */
+    dg.instID = ray.instID;
+    dg.geomID = ray.geomID;
+    dg.primID = ray.primID;
+    dg.u = ray.u;
+    dg.v = ray.v;
+    dg.P  = ray.org+ray.tfar*ray.dir;
+    dg.Ng = ray.Ng;
+    dg.Ns = Ns;
+    int materialID = postIntersect(ray,dg);
+    dg.Ng = face_forward(ray.dir,normalize(dg.Ng));
+    dg.Ns = face_forward(ray.dir,normalize(dg.Ns));
+
+    /*! Compute  simple volumetric effect. */
+    Vec3fa c = Vec3fa(1.0f);
+    const Vec3fa transmission = medium.transmission;
+    if (ne(transmission,Vec3fa(1.0f)))
+      c = c * pow(transmission,ray.tfar);
+
+    /* calculate BRDF */
+    BRDF brdf;
+    int numMaterials = g_ispc_scene->numMaterials;
+    ISPCMaterial** material_array = &g_ispc_scene->materials[0];
+    Material__preprocess(material_array,materialID,numMaterials,brdf,wo,dg,medium);
+
+    /* sample BRDF at hit point */
+    Sample3f wi1;
+    c = c * Material__sample(material_array,materialID,numMaterials,brdf,Lw, wo, dg, wi1, medium, RandomSampler_get2D(sampler));
+
+    /* iterate over lights */
+    context.context.flags = g_iflags_incoherent;
     for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
     {
       const Light* l = g_ispc_scene->lights[i];
-      Light_EvalRes le = l->eval(l,dg,ray.dir);
-      L = L + Lw*le.value;
-    }
-    validRay = 0;
-    return;
-  }
-
-  Vec3fa Ns = normalize(ray.Ng);
-
-  /* compute differential geometry */
-  dg.instID = ray.instID;
-  dg.geomID = ray.geomID;
-  dg.primID = ray.primID;
-  dg.u = ray.u;
-  dg.v = ray.v;
-  dg.P  = ray.org + ray.tfar * ray.dir;
-  dg.Ng = ray.Ng;
-  dg.Ns = Ns;
-  int materialID = postIntersect(ray,dg);
-  dg.Ng = face_forward(ray.dir,normalize(dg.Ng));
-  dg.Ns = face_forward(ray.dir,normalize(dg.Ns));
-
-  /*! Compute  simple volumetric effect. */
-  Vec3fa c = Vec3fa(1.0f);
-  const Vec3fa transmission = medium.transmission;
-  if (ne(transmission,Vec3fa(1.0f)))
-    c = c * pow(transmission, ray.tfar);
-
-  /* calculate BRDF */
-  BRDF brdf;
-  int numMaterials = g_ispc_scene->numMaterials;
-  ISPCMaterial** material_array = &g_ispc_scene->materials[0];
-  Material__preprocess(material_array, materialID, numMaterials, brdf, wo, dg, medium);
-
-  /* sample BRDF at hit point */
-  Sample3f wi1;
-  c = c * Material__sample(material_array, materialID, numMaterials, brdf, Lw, wo, dg, wi1, medium, RandomSampler_get2D(sampler));
-
-  /* iterate over lights */
-  context.context.flags = g_iflags_incoherent;
-  for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
-  {
-    const Light* l = g_ispc_scene->lights[i];
-    Light_SampleRes ls = l->sample(l,dg,RandomSampler_get2D(sampler));
-    if (ls.pdf <= 0.0f) continue;
+      Light_SampleRes ls = l->sample(l,dg,RandomSampler_get2D(sampler));
+      if (ls.pdf <= 0.0f) continue;
       Vec3fa transparency = Vec3fa(1.0f);
       Ray shadow(dg.P,ls.dir,dg.eps,ls.dist,time);
       context.userRayExt = &transparency;
       rtcOccluded1(g_scene,&context.context,RTCRay_(shadow));
-
+      //RayStats_addShadowRay(stats);
+      //if (shadow.geomID != RTC_INVALID_GEOMETRY_ID) continue;
       if (max(max(transparency.x,transparency.y),transparency.z) > 0.0f)
-        L = L + Lw * ls.weight * transparency * Material__eval(material_array, materialID, numMaterials, brdf, wo, dg, ls.dir);
-
-    // wil.pdf is  a float. Maybe we just return this value and compare it outside?
-    if (wi1.pdf <= 1E-4f /* 0.0f */)
-    { 
-      validRay = 0;
-      return;
+        L = L + Lw*ls.weight*transparency*Material__eval(material_array,materialID,numMaterials,brdf,wo,dg,ls.dir);
     }
-  }
 
-  Lw = Lw*c/wi1.pdf;
-    
-  /* setup secondary ray */
-  float sign = dot(wi1.v,dg.Ng) < 0.0f ? -1.0f : 1.0f;
-  dg.P = dg.P + sign*dg.eps*dg.Ng;
-  //init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
+    if (wi1.pdf <= 1E-4f /* 0.0f */){
+        validRay = 0;
+        return;
+    }
+
+    Lw = Lw*c/wi1.pdf;
+
+    /* setup secondary ray */
+    float sign = dot(wi1.v,dg.Ng) < 0.0f ? -1.0f : 1.0f;
+    dg.P = dg.P + sign*dg.eps*dg.Ng;
+    init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
 }
 
 /************************************************************************************************/
@@ -2093,7 +2076,7 @@ void colorBatchTask (int taskIndex,
 void intersectBatchTask (int taskIndex,
                          int threadIndex, 
                          batchedRay* batch,
-                         IntersectContext* context)
+                         IntersectContext* context) //TODO: Change context to use the batched context
 {
   /* intersect ray with scene */
   rtcIntersect1(g_scene,&context[taskIndex].context, RTCRayHit_(batch[taskIndex].ray));
@@ -2104,7 +2087,9 @@ void intersectBatchTask (int taskIndex,
 /* After the scene has been divided into tiles, each thread is tasked with creating a ray per
 /*  pixel. For now, we do not support a spp (sample per pixel) greater than one.
 /************************************************************************************************/
-void batchTileTask (int taskIndex, int threadIndex, batchedRay* batch,
+void batchTileTask (int taskIndex,
+                      int threadIndex,
+                      batchedRay* batch,
                       const unsigned int width,
                       const unsigned int height,
                       const float time, // TODO: Get rid of this
@@ -2124,17 +2109,16 @@ void batchTileTask (int taskIndex, int threadIndex, batchedRay* batch,
   for (unsigned int y = y0; y < y1; ++y) for (unsigned int x = x0; x < x1; ++x)
   {
 	// RandomSampler is used to generate random numbers
-    RandomSampler sampler;
-	RandomSampler_init(sampler, (int)x, (int)y, g_accu_count);
+	RandomSampler_init(batch[y * width + x].sampler, (int)x, (int)y, g_accu_count);
 	
 	// Apply the randomization for the ray inputs
-	float fx = x + RandomSampler_get1D(sampler);
-    float fy = y + RandomSampler_get1D(sampler);
-	float time = RandomSampler_get1D(sampler);
+	float fx = x + RandomSampler_get1D(batch[y * width + x].sampler);
+    float fy = y + RandomSampler_get1D(batch[y * width + x].sampler);
+	batch[y * width + x].time = RandomSampler_get1D(batch[y * width + x].sampler);
 
 	// Generate the ray
 	Ray ray(Vec3fa(camera.xfm.p),
-                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,time);
+                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,batch[y * width + x].time);
 					 
 	// assign the index value to the ray.id to be used to map ray to pixel
 	ray.id = y * width + x;
@@ -2278,37 +2262,18 @@ extern "C" void device_render (int* pixels,
   
   const int numTilesX = (width +TILE_SIZE_X-1)/TILE_SIZE_X;
   const int numTilesY = (height+TILE_SIZE_Y-1)/TILE_SIZE_Y;
+  const int numTiles  = numTilesX * numTilesY;
+
+  const int numPixels = height * width;
 
   // Calculate the number of pixels there are
-  int batchSize = height * width;
-  
-  /* Allocate space for the initial batch of rays */
-  /*Ray *batch;
-  batch = (Ray*) malloc(batchSize * sizeof(Ray));
-  // If this is NULL, something is very, very wrong.
-  if(batch == NULL)
-  {
-    printf("Error! memory for the initial batch not allocated.");
-    exit(0);
-  }*/
+  int batchSize = numPixels;
   
   std::vector<batchedRay> batch(batchSize);
   
-  /* Create batch of rays
-   *  This loop uses as many threads as are available to create the initial batch of rays.
-   */ 
-  parallel_for(size_t(0),size_t(numTilesX*numTilesY),[&](const range<size_t>& range) {
-    const int threadIndex = (int)TaskScheduler::threadIndex();
-    for (size_t i=range.begin(); i<range.end(); i++)
-	  batchTileTask((int)i, threadIndex, batch.data(), width, height, time, camera, numTilesX, numTilesY);
-  });
-
-  
-  
-  
-  /* Allocate memory for pixel colors */
+  // Allocate memory for pixel colors 
   Vec3fa *L;
-  L = (Vec3fa*) alignedMalloc(batchSize * sizeof(Vec3fa), 16);
+  L = (Vec3fa*) alignedMalloc(numPixels * sizeof(Vec3fa), 16);
   // If this is NULL, something is very, very wrong.
   if(L == NULL)
   {
@@ -2316,51 +2281,34 @@ extern "C" void device_render (int* pixels,
     exit(0);
   }
   //Initialize L values
-  for(int i = 0; i < batchSize; ++i)
+  for(int i = 0; i < numPixels; ++i)
+  {
     L[i] = Vec3fa(0.0f);
-
-  Vec3fa *Lw;
-  Lw = (Vec3fa*) alignedMalloc(batchSize * sizeof(Vec3fa), 16);
-  // If this is NULL, something is very, very wrong.
-  if(Lw == NULL)
-  {
-    printf("Error! memory for the Lw values not allocated.");
-    exit(0);
-  }
-  //Initialize L values
-  for(int i = 0; i < batchSize; ++i)
-    Lw[i] = Vec3fa(1.0f);
-
-
-
-  /* Allocate memory for medium */
-  Medium *medium;
-  medium = (Medium*) malloc(batchSize * sizeof(Medium));
-  // If this is NULL, something is very, very wrong.
-  if(medium == NULL)
-  {
-    printf("Error! memory for the medium values not allocated.");
-    exit(0);
-  }
-  //Initialize L values
-  for(int i = 0; i < batchSize; ++i)
-    medium[i] = make_Medium_Vacuum();
-
-
-
-  /* Allocate memory for Differential Geometry */
-  DifferentialGeometry *dg;
-  dg = (DifferentialGeometry*) malloc(batchSize * sizeof(DifferentialGeometry));
-  // If this is NULL, something is very, very wrong.
-  if(dg == NULL)
-  {
-    printf("Error! memory for the initial dg not allocated.");
-    exit(0);
   }
   
+  /* Create batch of rays
+   *  This loop uses as many threads as are available to create the initial batch of rays.
+   */ 
+  parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
+    const int threadIndex = (int)TaskScheduler::threadIndex();
+    for (size_t i=range.begin(); i<range.end(); i++)
+	  batchTileTask((int)i, threadIndex, batch.data(), width, height, time, camera, numTilesX, numTilesY);
+  });
+
+  parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
+    const int threadIndex = (int)TaskScheduler::threadIndex();
+    for (size_t i=range.begin(); i<range.end(); i++)
+	  renderBatchTask((int)i,threadIndex, pixels, width, height, time, camera, numTilesX, numTilesY, batch.data(), L);
+  });
+
+  parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
+    const int threadIndex = (int)TaskScheduler::threadIndex();
+    for (size_t i=range.begin(); i<range.end(); i++)
+	  colorPixelsTask((int)i,threadIndex, L, pixels, width, height, numTilesX, numTilesY);
+  });
   
-    
-  /* Start of for-loop to trace the rays */
+  /*
+  // Start of for-loop to trace the rays /
   for (int bounce = 0; bounce < g_max_path_length; ++bounce)
   { 
     //printf("\n For bounce %d\n",bounce);
@@ -2373,12 +2321,12 @@ extern "C" void device_render (int* pixels,
     for(int index = 0; index < batchSize; ++index)
     {
       InitIntersectionContext(&context[index]);
-      context[index].context.flags = (index == 0) ? g_iflags_coherent : g_iflags_incoherent;
+      context[index].context.flags = (bounce == 0) ? g_iflags_coherent : g_iflags_incoherent;
     }
 
-    /* Perform intersection calculations
-     * This loop performs the intersection calculations. This will be what we benchmark.
-     */
+    // Perform intersection calculations
+     // This loop performs the intersection calculations. This will be what we benchmark.
+     //
     //auto start = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
@@ -2389,25 +2337,25 @@ extern "C" void device_render (int* pixels,
     //auto duration = duration_cast<microseconds>(stop - start);
     //std::cout << "Time Taken: " << duration.count() << std::endl;
 
-    /**********************************************************************************************/
-    /* This loop goes through all the rays in the batch and calculates the ray's contribution to the
-    /*  scene. It is based primarily on `renderPixelFunction` from Embree's pathtracer.
-    /**********************************************************************************************/
+    // ********************************************************************************************** /
+    // This loop goes through all the rays in the batch and calculates the ray's contribution to the
+    //  scene. It is based primarily on `renderPixelFunction` from Embree's pathtracer.
+    // ********************************************************************************************** /
     //printf("This is test point - 1\n");
     //fflush(stdout);
    	parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t i=range.begin(); i<range.end(); i++)
-	    colorBatchTask ((int)i, threadIndex, batch[i].ray, context[i], L[batch[i].ray.id], Lw[batch[i].ray.id], dg[batch[i].ray.id], medium[batch[i].ray.id], batch[i].valid);
+	    colorBatchTask ((int)i, threadIndex, batch[i].ray, context[i], L[batch[i].ray.id], batch[i].Lw, batch[i].dg, batch[i].medium, batch[i].valid, batch[i].sampler, batch[i].time);
     });
     //printf("This is test point - 2\n");
     //fflush(stdout);
-    /**********************************************************************************************/
-    /* This part of the code is still a work in progress. The idea is that now that we have finished
-    /*  processing the previous batch, we need to form the next batch. This means we need to create
-    /*  a new ray batch and its respective context for use in the next iteration. In the future, we
-    /*  should probably turn this into a respectable piece of code.
-    /**********************************************************************************************/
+    // ********************************************************************************************** /
+    // This part of the code is still a work in progress. The idea is that now that we have finished
+    //  processing the previous batch, we need to form the next batch. This means we need to create
+    //  a new ray batch and its respective context for use in the next iteration. In the future, we
+    //  should probably turn this into a respectable piece of code.
+    // ********************************************************************************************* /
     free(context);
     
 	// For rays that are left, they need to be formed into a new batch and sent back to the top of
@@ -2429,29 +2377,14 @@ extern "C" void device_render (int* pixels,
     
     //printf("Next batch size = %d\n", batchSize);
     //fflush(stdout);
-  } /* End of ray-trace for-loop */
+  } // End of ray-trace for-loop * /
 
-
-  /* old render image
-  parallel_for(size_t(0),size_t(numTilesX*numTilesY),[&](const range<size_t>& range) {
-    const int threadIndex = (int)TaskScheduler::threadIndex();
-    for (size_t i=range.begin(); i<range.end(); i++)
-      //renderTileTask((int)i,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
-	  renderBatchTask((int)i,threadIndex,pixels,batch,width,height,time,camera,numTilesX,numTilesY);
-  }); */
   
-  // Clean up any unused memory
-  alignedFree(Lw);
-  free(medium);
-  free(dg);
-  
-  //printf("\n COLOR BATCH \n");
-  
-  /************************************************************************************************/
-  /* Use the color values (L) calculated above to shade the pixels. Based on `renderTileStandard`
-  /*  in Embree's pathtracer.
-  /************************************************************************************************/
-  parallel_for(size_t(0),size_t(numTilesX*numTilesY),[&](const range<size_t>& range) {
+  // ************************************************************************************************ /
+  // Use the color values (L) calculated above to shade the pixels. Based on `renderTileStandard`
+  //  in Embree's pathtracer.
+  // *********************************************************************************************** /
+  parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
     for (size_t i=range.begin(); i<range.end(); i++)
 	  colorPixelsTask((int)i, threadIndex, L, pixels, width, height, numTilesX, numTilesY);
@@ -2459,7 +2392,8 @@ extern "C" void device_render (int* pixels,
 
   // Free the last piece of memory before returning
   alignedFree(L);
-
+  */
+  
   //rtcDebug();
 } // device_render
 
