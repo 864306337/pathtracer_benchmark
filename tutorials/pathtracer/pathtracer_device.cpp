@@ -1765,6 +1765,10 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
 }
 
 
+// ================================================================================================================================
+// ================================================================================================================================
+// ================================================================================================================================
+// ================================================================================================================================
 // Adding a struct for good luck
 // TODO
 struct batchedRay {
@@ -1775,13 +1779,9 @@ struct batchedRay {
   Medium medium = make_Medium_Vacuum();
   DifferentialGeometry dg;
   int valid = 1; 
-  IntersectContext context; 
+  IntersectContext context;
+  unsigned int pixel;
 };
-
-// ================================================================================================================================
-// ================================================================================================================================
-// ================================================================================================================================
-// ================================================================================================================================
 
 void renderPixelBacthFunction(Ray& ray,
                                 RandomSampler& sampler,
@@ -1918,120 +1918,6 @@ void colorPixelsTask(int taskIndex,
   }
 }
 
-void colorBatchTask (int taskIndex,
-                      int threadIndex,
-                      Ray& ray,
-                      IntersectContext& context,
-                      Vec3fa& L,
-                      Vec3fa& Lw,
-                      DifferentialGeometry& dg,
-                      Medium& medium,
-                      int& validRay,
-                      RandomSampler& sampler,
-                      float& time)
-{  
- /* terminate if contribution too low */
-    if (max(Lw.x,max(Lw.y,Lw.z)) < 0.01f)
-    {
-      validRay = 0;
-      return;
-    }
-    
-  const Vec3fa wo = neg(ray.dir);
-  
-    /* invoke environment lights if nothing hit */
-    if (ray.geomID == RTC_INVALID_GEOMETRY_ID)
-    {
-      //L = L + Lw*Vec3fa(1.0f);
-
-      /* iterate over all lights */
-      for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
-      {
-        const Light* l = g_ispc_scene->lights[i];
-        Light_EvalRes le = l->eval(l,dg,ray.dir);
-        L = L + Lw*le.value;
-      }
-
-      validRay = 0;
-     return;
-    }
-
-    Vec3fa Ns = normalize(ray.Ng);
-
-    /* compute differential geometry */
-    dg.instID = ray.instID;
-    dg.geomID = ray.geomID;
-    dg.primID = ray.primID;
-    dg.u = ray.u;
-    dg.v = ray.v;
-    dg.P  = ray.org+ray.tfar*ray.dir;
-    dg.Ng = ray.Ng;
-    dg.Ns = Ns;
-    int materialID = postIntersect(ray,dg);
-    dg.Ng = face_forward(ray.dir,normalize(dg.Ng));
-    dg.Ns = face_forward(ray.dir,normalize(dg.Ns));
-
-    /*! Compute  simple volumetric effect. */
-    Vec3fa c = Vec3fa(1.0f);
-    const Vec3fa transmission = medium.transmission;
-    if (ne(transmission,Vec3fa(1.0f)))
-      c = c * pow(transmission,ray.tfar);
-
-    /* calculate BRDF */
-    BRDF brdf;
-    int numMaterials = g_ispc_scene->numMaterials;
-    ISPCMaterial** material_array = &g_ispc_scene->materials[0];
-    Material__preprocess(material_array,materialID,numMaterials,brdf,wo,dg,medium);
-
-    /* sample BRDF at hit point */
-    Sample3f wi1;
-    c = c * Material__sample(material_array,materialID,numMaterials,brdf,Lw, wo, dg, wi1, medium, RandomSampler_get2D(sampler));
-
-    /* iterate over lights */
-    context.context.flags = g_iflags_incoherent;
-    for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
-    {
-      const Light* l = g_ispc_scene->lights[i];
-      Light_SampleRes ls = l->sample(l,dg,RandomSampler_get2D(sampler));
-      if (ls.pdf <= 0.0f) continue;
-      Vec3fa transparency = Vec3fa(1.0f);
-      Ray shadow(dg.P,ls.dir,dg.eps,ls.dist,time);
-      context.userRayExt = &transparency;
-      rtcOccluded1(g_scene,&context.context,RTCRay_(shadow));
-      //RayStats_addShadowRay(stats);
-      //if (shadow.geomID != RTC_INVALID_GEOMETRY_ID) continue;
-      if (max(max(transparency.x,transparency.y),transparency.z) > 0.0f)
-        L = L + Lw*ls.weight*transparency*Material__eval(material_array,materialID,numMaterials,brdf,wo,dg,ls.dir);
-    }
-
-    if (wi1.pdf <= 1E-4f /* 0.0f */){
-        validRay = 0;
-        return;
-    }
-
-    Lw = Lw*c/wi1.pdf;
-
-    /* setup secondary ray */
-    float sign = dot(wi1.v,dg.Ng) < 0.0f ? -1.0f : 1.0f;
-    dg.P = dg.P + sign*dg.eps*dg.Ng;
-    init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
-}
-
-/************************************************************************************************/
-/* This task is used to isolate the intersection function. After all the rays are batched, they
-/*  are evenly distributed among the available threads which use this task to perform the
-/*  intersection calculations.
-/************************************************************************************************/
-void intersectBatchTask (int taskIndex,
-                         int threadIndex, 
-                         batchedRay* batch,
-                         IntersectContext* context) //TODO: Change context to use the batched context
-{
-  /* intersect ray with scene */
-  rtcIntersect1(g_scene,&context[taskIndex].context, RTCRayHit_(batch[taskIndex].ray));
-  RayStats_addRay(g_stats[threadIndex]);
-}
-
 /************************************************************************************************/
 /* After the scene has been divided into tiles, each thread is tasked with creating a ray per
 /*  pixel. For now, we do not support a spp (sample per pixel) greater than one.
@@ -2057,23 +1943,26 @@ void batchTileTask (int taskIndex,
   // Loop through all the pixels of the given tile, creating a single ray per pixel
   for (unsigned int y = y0; y < y1; ++y) for (unsigned int x = x0; x < x1; ++x)
   {
+    unsigned int batch_index = y * width + x;
+
 	// RandomSampler is used to generate random numbers
-	RandomSampler_init(batch[y * width + x].sampler, (int)x, (int)y, g_accu_count);
+	RandomSampler_init(batch[batch_index].sampler, (int)x, (int)y, g_accu_count);
 	
 	// Apply the randomization for the ray inputs
-	float fx = x + RandomSampler_get1D(batch[y * width + x].sampler);
-    float fy = y + RandomSampler_get1D(batch[y * width + x].sampler);
-	batch[y * width + x].time = RandomSampler_get1D(batch[y * width + x].sampler);
+	float fx = x + RandomSampler_get1D(batch[batch_index].sampler);
+    float fy = y + RandomSampler_get1D(batch[batch_index].sampler);
+	batch[batch_index].time = RandomSampler_get1D(batch[batch_index].sampler);
 
 	// Generate the ray
 	Ray ray(Vec3fa(camera.xfm.p),
-                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,batch[y * width + x].time);
+                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,batch[batch_index].time);
 					 
 	// assign the index value to the ray.id to be used to map ray to pixel
-	ray.id = y * width + x;
+	ray.id = batch_index;
+    batch[batch_index].pixel = batch_index;
 
 	// Store the ray into the batch where the index represents the pixel position in the frame
-	batch[y * width + x].ray = ray;
+	batch[batch_index].ray = ray;
   }
 }
 
@@ -2214,11 +2103,6 @@ extern "C" void device_render (int* pixels,
   const int numTiles  = numTilesX * numTilesY;
 
   const int numPixels = height * width;
-
-  // Calculate the number of pixels there are
-  int batchSize = numPixels;
-  
-  std::vector<batchedRay> batch(batchSize);
   
   // Allocate memory for pixel colors 
   Vec3fa *L;
@@ -2235,25 +2119,37 @@ extern "C" void device_render (int* pixels,
     L[i] = Vec3fa(0.0f);
   }
   
-  /* Create batch of rays
-   *  This loop uses as many threads as are available to create the initial batch of rays.
-   */ 
+  // Create the holder for the initial batch
+  std::vector<batchedRay> batch(numPixels);
+  
+  // Create the initial batch size
+  int batchSize = numPixels;
+  
+  // ************************************************************************ //
+  // Create the initial batch of rays.
+  // ************************************************************************ //
   parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
     for (size_t i=range.begin(); i<range.end(); i++)
 	  batchTileTask((int)i, threadIndex, batch.data(), width, height, time, camera, numTilesX, numTilesY);
   });
 
-  //parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
-  //  const int threadIndex = (int)TaskScheduler::threadIndex();
-  //  for (size_t i=range.begin(); i<range.end(); i++)
-  //	  renderBatchTask((int)i,threadIndex, pixels, width, height, time, camera, numTilesX, numTilesY, batch.data(), L);
-  //});
-  
-
+  // ************************************************************************ //
+  // For loop to trace rays to completion (or until they reach the maximum    //
+  //  path depth.                                                             //
+  // ************************************************************************ //
   for (int bounce = 0; bounce < g_max_path_length; bounce++)
   {
-    parallel_for(size_t(0),size_t(numPixels),[&](const range<size_t>& range) {
+    // Just some debug output_iterator
+    printf("\nFor bounce %d:\n", bounce);
+    printf("batchSize: %d\n", batchSize);
+
+    // ********************************************************************** //
+    // This seems really dumb, but I assure you it's for a reason... This     //
+    //  initializes the context before the ray is traced. Granted, not having //
+    //  this seems to have no affect on the render at all...                  //
+    // ********************************************************************** //
+    parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t i=range.begin(); i<range.end(); i++)
       {
@@ -2262,7 +2158,11 @@ extern "C" void device_render (int* pixels,
       }
     });
 
-    parallel_for(size_t(0),size_t(numPixels),[&](const range<size_t>& range) {
+    // ********************************************************************** //
+    // The RTC calculations are isolated from everything else to allow for and
+    //  accurate benchmark measurement.
+    // ********************************************************************** //
+    parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t i=range.begin(); i<range.end(); i++)
       {
@@ -2270,123 +2170,74 @@ extern "C" void device_render (int* pixels,
         RayStats_addRay(g_stats[0]);
       }
     });
-    
-    for (unsigned int y = 0; y < height; ++y) for (unsigned int x = 0; x < width; ++x)
-    {
-      if(batch[y*width+x].valid == 1)
-      {                
-        renderPixelBacthFunction(batch[y*width+x].ray,
-                                      batch[y*width+x].sampler,
-                                      batch[y*width+x].time,
-                                      batch[y*width+x].Lw,
-                                      batch[y*width+x].medium,
-                                      batch[y*width+x].dg,
-                                      L[y*width+x],
-                                      camera,
-                                      g_stats[0],
-                                      batch[y*width+x].context,
-                                      batch[y*width+x].valid);
-        
-        if (max(batch[y*width+x].Lw.x,max(batch[y*width+x].Lw.y,batch[y*width+x].Lw.z)) < 0.01f)
-        {
-          batch[y*width+x].valid = 0;
-        }
-      }
-    }
-  }
-
-  parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
-    const int threadIndex = (int)TaskScheduler::threadIndex();
-    for (size_t i=range.begin(); i<range.end(); i++)
-	  colorPixelsTask((int)i,threadIndex, L, pixels, width, height, numTilesX, numTilesY);
-  });
-  
-  /*
-  // Start of for-loop to trace the rays /
-  for (int bounce = 0; bounce < g_max_path_length; ++bounce)
-  { 
-    //printf("\n For bounce %d\n",bounce);
-    //printf("Batch side: %d\n", batchSize);
-    //fflush(stdout);
-    
-    // For some reason, I had to use malloc... no other option here.
-    IntersectContext *context;
-    context = (IntersectContext*) malloc(batchSize * sizeof(IntersectContext));
-    for(int index = 0; index < batchSize; ++index)
-    {
-      InitIntersectionContext(&context[index]);
-      context[index].context.flags = (bounce == 0) ? g_iflags_coherent : g_iflags_incoherent;
-    }
-
-    // Perform intersection calculations
-     // This loop performs the intersection calculations. This will be what we benchmark.
-     //
-    //auto start = high_resolution_clock::now();
+ 
+    // ********************************************************************** //
+    // This function finishes the trace. After this function, the L value for
+    //  the given ray should be set. If there are no more samples-per-pixel
+    //  to render we can move to coloring.
+    // ********************************************************************** //
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
-      for (size_t i=range.begin(); i<range.end(); i++)
-	    intersectBatchTask ((int)i, threadIndex, batch.data(), context);
-    });
-    //auto stop = high_resolution_clock::now();
-    //auto duration = duration_cast<microseconds>(stop - start);
-    //std::cout << "Time Taken: " << duration.count() << std::endl;
+      for (size_t taskIndex=range.begin(); taskIndex<range.end(); taskIndex++)
+      {  
+        // This just makes the code a little cleaner
+        int myIndex = batch[taskIndex].pixel;
 
-    // ********************************************************************************************** /
-    // This loop goes through all the rays in the batch and calculates the ray's contribution to the
-    //  scene. It is based primarily on `renderPixelFunction` from Embree's pathtracer.
-    // ********************************************************************************************** /
-    //printf("This is test point - 1\n");
-    //fflush(stdout);
-   	parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
-      const int threadIndex = (int)TaskScheduler::threadIndex();
-      for (size_t i=range.begin(); i<range.end(); i++)
-	    colorBatchTask ((int)i, threadIndex, batch[i].ray, context[i], L[batch[i].ray.id], batch[i].Lw, batch[i].dg, batch[i].medium, batch[i].valid, batch[i].sampler, batch[i].time);
+        // Calling this function populates the L value with the proper color of
+        //  the pixel.
+        renderPixelBacthFunction(batch[taskIndex].ray,
+                                  batch[taskIndex].sampler,
+                                  batch[taskIndex].time,
+                                  batch[taskIndex].Lw,
+                                  batch[taskIndex].medium,
+                                  batch[taskIndex].dg,
+                                  L[myIndex],
+                                  camera,
+                                  g_stats[threadIndex],
+                                  batch[taskIndex].context,
+                                  batch[taskIndex].valid);
+        
+        // If the ray is no longer contributing (significantly) to the coloring of
+        //  the pixel, we can stop processing it.
+        // NOTE: Lw is a weight value
+        if (max(batch[taskIndex].Lw.x,max(batch[taskIndex].Lw.y,batch[taskIndex].Lw.z)) < 0.01f)
+        {
+          batch[taskIndex].valid = 0;
+        }
+      }
     });
-    //printf("This is test point - 2\n");
-    //fflush(stdout);
-    // ********************************************************************************************** /
-    // This part of the code is still a work in progress. The idea is that now that we have finished
-    //  processing the previous batch, we need to form the next batch. This means we need to create
-    //  a new ray batch and its respective context for use in the next iteration. In the future, we
-    //  should probably turn this into a respectable piece of code.
-    // ********************************************************************************************* /
-    free(context);
     
-	// For rays that are left, they need to be formed into a new batch and sent back to the top of
-	//	the loop.
-    volatile int newBatchSize = 0;
-    
+    // ********************************************************************** //
+    // Remove the rays that no longer need to be traced. We might be able to  //
+    //  find a faster/more efficient way of doing this in the future, but for //
+    //  now this is fine.                                                     //
+    // ********************************************************************** //
     batch.erase(
         std::remove_if(batch.begin(), batch.end(), [&](batchedRay const & batch) {
-            return batch.valid == 0;
-            }),
-            batch.end());
+          return batch.valid == 0;
+        }),
+        batch.end());
     
+    // If there are no more rays, then we can color the scene.
     if(batch.empty())
         break;
     
-    //Clean up the batch memory
-    // TODO: Update comment
+    // Update the batchSize for the next loop iteration.
     batchSize = batch.size();
-    
-    //printf("Next batch size = %d\n", batchSize);
-    //fflush(stdout);
-  } // End of ray-trace for-loop * /
+  }
 
-  
-  // ************************************************************************************************ /
-  // Use the color values (L) calculated above to shade the pixels. Based on `renderTileStandard`
-  //  in Embree's pathtracer.
-  // *********************************************************************************************** /
+  // ************************************************************************ //
+  // Loop through all the pixels and color them. Since this is decoupled from //
+  //  everything else, we can just process them as tiles.                     //
+  // ************************************************************************ //
   parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
     for (size_t i=range.begin(); i<range.end(); i++)
 	  colorPixelsTask((int)i, threadIndex, L, pixels, width, height, numTilesX, numTilesY);
-  });  
-
-  // Free the last piece of memory before returning
+  });
+  
+  // Make sure to free L's alloc'd memory
   alignedFree(L);
-  */
   
   //rtcDebug();
 } // device_render
