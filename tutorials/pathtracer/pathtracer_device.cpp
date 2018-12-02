@@ -1771,6 +1771,7 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
 // ================================================================================================================================
 
 // Struct to organize data
+// TODO: Add comments to explain variables
 struct batchedRay {
   Ray ray;
   RandomSampler sampler;
@@ -1954,11 +1955,14 @@ void batchTileTask (int taskIndex,
                      Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,batch[batch_index].time);
 					 
 	// assign the index value to the ray.id to be used to map ray to pixel
-	ray.id = batch_index;
     batch[batch_index].pixel = batch_index;
 
 	// Store the ray into the batch where the index represents the pixel position in the frame
 	batch[batch_index].ray = ray;
+    
+    // NOTE: Nothing I try is able to get this to work. When I test it later,
+    //  the value stored here does not match what I store in the pixel value.
+    //batch[batch_index].ray.id = batch_index;
   }
 }
 
@@ -2115,7 +2119,8 @@ extern "C" void device_render (int* pixels,
     L[i] = Vec3fa(0.0f);
   }
   
-  // Create the holder for the initial batch
+  // Create the holders for the initial batch
+  std::vector<Ray> rays(numPixels);
   std::vector<batchedRay> batch(numPixels);
   
   // Create the initial batch size
@@ -2208,12 +2213,23 @@ extern "C" void device_render (int* pixels,
     //  find a faster/more efficient way of doing this in the future, but for //
     //  now this is fine.                                                     //
     // ********************************************************************** //
-    batch.erase(
-        std::remove_if(batch.begin(), batch.end(), [&](batchedRay const & batch) {
-          return batch.valid == 0;
-        }),
-        batch.end());
-    
+
+    // This is just a custom implementation of the erase-remove idiom.
+    //  Doing it this way allows us to use one vector to remove elements from
+    //  another. While the order of the vector is not guaranteed, both vectors
+    //  should remain relatively synchronized.
+    auto first = batch.begin();
+    auto result = batch.begin();
+    while (first != batch.end()) {
+      if(!(first->valid == 0))
+      {
+        *result = std::move(*first);
+        ++result;
+      }
+      ++first;
+    }
+    batch.erase(result, batch.end());
+
     // If there are no more rays, then we can color the scene.
     if(batch.empty())
         break;
