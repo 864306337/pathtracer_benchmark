@@ -1769,8 +1769,8 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
 // ================================================================================================================================
 // ================================================================================================================================
 // ================================================================================================================================
-// Adding a struct for good luck
-// TODO
+
+// Struct to organize data
 struct batchedRay {
   Ray ray;
   RandomSampler sampler;
@@ -1783,6 +1783,9 @@ struct batchedRay {
   unsigned int pixel;
 };
 
+// ***************************************************************************//
+// TODO: Create comment
+// ***************************************************************************//
 void renderPixelBacthFunction(Ray& ray,
                                 RandomSampler& sampler,
                                 float& time,
@@ -1795,98 +1798,90 @@ void renderPixelBacthFunction(Ray& ray,
                                 IntersectContext& context,
                                 int& valid)
 {
-    //rtcIntersect1(g_scene,&context.context,RTCRayHit_(ray));
-    //RayStats_addRay(stats);
-    
-    const Vec3fa wo = neg(ray.dir);
+  const Vec3fa wo = neg(ray.dir);
 
-    /* invoke environment lights if nothing hit */
-    if (ray.geomID == RTC_INVALID_GEOMETRY_ID)
-    {
-      //L = L + Lw*Vec3fa(1.0f);
+  /* invoke environment lights if nothing hit */
+  if (ray.geomID == RTC_INVALID_GEOMETRY_ID)
+  {
+    //L = L + Lw*Vec3fa(1.0f);
 
-      /* iterate over all lights */
-      for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
-      {
-        const Light* l = g_ispc_scene->lights[i];
-        Light_EvalRes le = l->eval(l,dg,ray.dir);
-        L = L + Lw*le.value;
-      }
-
-      valid = 0;
-      return;
-      //break;
-    }
-
-    Vec3fa Ns = normalize(ray.Ng);
-
-    /* compute differential geometry */
-    dg.instID = ray.instID;
-    dg.geomID = ray.geomID;
-    dg.primID = ray.primID;
-    dg.u = ray.u;
-    dg.v = ray.v;
-    dg.P  = ray.org+ray.tfar*ray.dir;
-    dg.Ng = ray.Ng;
-    dg.Ns = Ns;
-    int materialID = postIntersect(ray,dg);
-    dg.Ng = face_forward(ray.dir,normalize(dg.Ng));
-    dg.Ns = face_forward(ray.dir,normalize(dg.Ns));
-
-    /*! Compute  simple volumetric effect. */
-    Vec3fa c = Vec3fa(1.0f);
-    const Vec3fa transmission = medium.transmission;
-    if (ne(transmission,Vec3fa(1.0f)))
-      c = c * pow(transmission,ray.tfar);
-
-    /* calculate BRDF */
-    BRDF brdf;
-    int numMaterials = g_ispc_scene->numMaterials;
-    ISPCMaterial** material_array = &g_ispc_scene->materials[0];
-    Material__preprocess(material_array,materialID,numMaterials,brdf,wo,dg,medium);
-
-    /* sample BRDF at hit point */
-    Sample3f wi1;
-    c = c * Material__sample(material_array,materialID,numMaterials,brdf,Lw, wo, dg, wi1, medium, RandomSampler_get2D(sampler));
-
-    /* iterate over lights */
-    context.context.flags = g_iflags_incoherent;
+    /* iterate over all lights */
     for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
     {
       const Light* l = g_ispc_scene->lights[i];
-      Light_SampleRes ls = l->sample(l,dg,RandomSampler_get2D(sampler));
-      if (ls.pdf <= 0.0f) continue;
-      Vec3fa transparency = Vec3fa(1.0f);
-      Ray shadow(dg.P,ls.dir,dg.eps,ls.dist,time);
-      context.userRayExt = &transparency;
-      rtcOccluded1(g_scene,&context.context,RTCRay_(shadow));
-      RayStats_addShadowRay(stats);
-      //if (shadow.geomID != RTC_INVALID_GEOMETRY_ID) continue;
-      if (max(max(transparency.x,transparency.y),transparency.z) > 0.0f)
-        L = L + Lw*ls.weight*transparency*Material__eval(material_array,materialID,numMaterials,brdf,wo,dg,ls.dir);
+      Light_EvalRes le = l->eval(l,dg,ray.dir);
+      L = L + Lw*le.value;
     }
 
-    if (wi1.pdf <= 1E-4f /* 0.0f */)
-    {
-      valid = 0;
-      return;
-      //break;
-    }
-    Lw = Lw*c/wi1.pdf;
+    valid = 0;
+    return;
 
-    /* setup secondary ray */
-    float sign = dot(wi1.v,dg.Ng) < 0.0f ? -1.0f : 1.0f;
-    dg.P = dg.P + sign*dg.eps*dg.Ng;
-    init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
-  //}
+  }
+
+  Vec3fa Ns = normalize(ray.Ng);
+
+  /* compute differential geometry */
+  dg.instID = ray.instID;
+  dg.geomID = ray.geomID;
+  dg.primID = ray.primID;
+  dg.u = ray.u;
+  dg.v = ray.v;
+  dg.P  = ray.org+ray.tfar*ray.dir;
+  dg.Ng = ray.Ng;
+  dg.Ns = Ns;
+  int materialID = postIntersect(ray,dg);
+  dg.Ng = face_forward(ray.dir,normalize(dg.Ng));
+  dg.Ns = face_forward(ray.dir,normalize(dg.Ns));
+
+  /*! Compute  simple volumetric effect. */
+  Vec3fa c = Vec3fa(1.0f);
+  const Vec3fa transmission = medium.transmission;
+  if (ne(transmission,Vec3fa(1.0f)))
+    c = c * pow(transmission,ray.tfar);
+
+  /* calculate BRDF */
+  BRDF brdf;
+  int numMaterials = g_ispc_scene->numMaterials;
+  ISPCMaterial** material_array = &g_ispc_scene->materials[0];
+  Material__preprocess(material_array,materialID,numMaterials,brdf,wo,dg,medium);
+
+  /* sample BRDF at hit point */
+  Sample3f wi1;
+  c = c * Material__sample(material_array,materialID,numMaterials,brdf,Lw, wo, dg, wi1, medium, RandomSampler_get2D(sampler));
+
+  /* iterate over lights */
+  context.context.flags = g_iflags_incoherent;
+  for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
+  {
+    const Light* l = g_ispc_scene->lights[i];
+    Light_SampleRes ls = l->sample(l,dg,RandomSampler_get2D(sampler));
+    if (ls.pdf <= 0.0f) continue;
+    Vec3fa transparency = Vec3fa(1.0f);
+    Ray shadow(dg.P,ls.dir,dg.eps,ls.dist,time);
+    context.userRayExt = &transparency;
+    rtcOccluded1(g_scene,&context.context,RTCRay_(shadow));
+    RayStats_addShadowRay(stats);
+    //if (shadow.geomID != RTC_INVALID_GEOMETRY_ID) continue;
+    if (max(max(transparency.x,transparency.y),transparency.z) > 0.0f)
+      L = L + Lw*ls.weight*transparency*Material__eval(material_array,materialID,numMaterials,brdf,wo,dg,ls.dir);
+  }
+
+  if (wi1.pdf <= 1E-4f /* 0.0f */)
+  {
+    valid = 0;
+    return;
+  }
+  Lw = Lw*c/wi1.pdf;
+
+  /* setup secondary ray */
+  float sign = dot(wi1.v,dg.Ng) < 0.0f ? -1.0f : 1.0f;
+  dg.P = dg.P + sign*dg.eps*dg.Ng;
+  init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
 }
 
-// ================================================================================================================================
-// ================================================================================================================================
-// ================================================================================================================================
-// ================================================================================================================================
-
-
+// ***************************************************************************//
+// TODO: Create comment
+// ***************************************************************************//
 void colorPixelsTask(int taskIndex,
                         int threadIndex,
                         Vec3fa* L,
@@ -1918,10 +1913,11 @@ void colorPixelsTask(int taskIndex,
   }
 }
 
-/************************************************************************************************/
-/* After the scene has been divided into tiles, each thread is tasked with creating a ray per
-/*  pixel. For now, we do not support a spp (sample per pixel) greater than one.
-/************************************************************************************************/
+// ***************************************************************************//
+// After the scene has been divided into tiles, each thread is tasked with    //
+//  creating a ray-per-pixel. For now, we do not support a spp (sample-per-   //
+//  pixel) greater than one.                                                  //
+// ***************************************************************************//
 void batchTileTask (int taskIndex,
                       int threadIndex,
                       batchedRay* batch,
