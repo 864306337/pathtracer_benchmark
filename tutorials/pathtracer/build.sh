@@ -117,9 +117,11 @@ g++ -c ../common/tutorial/application.cpp -O3 -D TASKING_TBB -l:libtbb.so -l:lib
 
 
 
+# Build ISPC wrapper
+ispc --target=avx2 benchmark_wrapper.ispc -o benchmark_wrapper.o -h benchmark_wrapper.h
 
 # Create the pathtracer_device object
-g++ -c pathtracer_device.cpp -O3 -D TASKING_TBB -l:libtbb.so -l:libembree3.so
+g++ pathtracer_device.cpp -I. -O3 -D TASKING_TBB -c -l:libtbb.so -l:libembree3.so -o pathtracer_device.o
 
 # Compile pathtracer
-g++ -o pathtracer sysinfo.o mutex.o alloc.o filename.o stringstream.o tokenstream.o application.o string.o pfm.o ppm.o tga.o image.o texture.o obj_loader.o ply_loader.o xml_parser.o xml_writer.o xml_loader.o corona_loader.o scenegraph.o geometry_creation.o scene.o imgui.o imgui_draw.o imgui_impl_glfw_gl2.o tutorial_device.o tutorial.o ambient_light.o directional_light.o point_light.o light.o scene_device.o pathtracer_device.o pathtracer.cpp -O3 -D TASKING_TBB -std=c++11 -l:libtbb.so -l:libembree3.so -l:libpthread.so -l:libdl.so -l:libX11.so -l:libXrandr.so -l:libXi.so -l:libXxf86vm.so -l:libXcursor.so -l:libXinerama.so -l:libGL.so -l:libGLU.so -l:libglfw3.a
+g++ -I. -o pathtracer benchmark_wrapper.o sysinfo.o mutex.o alloc.o filename.o stringstream.o tokenstream.o application.o string.o pfm.o ppm.o tga.o image.o texture.o obj_loader.o ply_loader.o xml_parser.o xml_writer.o xml_loader.o corona_loader.o scenegraph.o geometry_creation.o scene.o imgui.o imgui_draw.o imgui_impl_glfw_gl2.o tutorial_device.o tutorial.o ambient_light.o directional_light.o point_light.o light.o scene_device.o pathtracer_device.o pathtracer.cpp -O3 -D TASKING_TBB -std=c++11 -l:libtbb.so -l:libembree3.so -l:libpthread.so -l:libdl.so -l:libX11.so -l:libXrandr.so -l:libXi.so -l:libXxf86vm.so -l:libXcursor.so -l:libXinerama.so -l:libGL.so -l:libGLU.so -l:libglfw3.a
