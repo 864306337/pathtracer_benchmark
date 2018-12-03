@@ -31,9 +31,6 @@ using namespace std::chrono;
 // Added ISPC function
 #include "benchmark_wrapper.h"
 
-
-
-
 namespace embree {
 #undef TILE_SIZE_X
 #undef TILE_SIZE_Y
@@ -1772,7 +1769,7 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
 
 // Struct to organize data
 // TODO: Add comments to explain variables
-struct batchedRay {
+struct RayData {
   RandomSampler sampler;
   float time;
   Vec3fa Lw = Vec3fa(1.0f);
@@ -1921,7 +1918,7 @@ void colorPixelsTask(int taskIndex,
 void batchTileTask (int taskIndex,
                       int threadIndex,
                       Ray* rays,
-                      batchedRay* rayData,
+                      RayData* rayData,
                       const unsigned int width,
                       const unsigned int height,
                       const float time, // TODO: Get rid of this
@@ -2121,7 +2118,7 @@ extern "C" void device_render (int* pixels,
   
   // Create the holders for the initial batch
   std::vector<Ray> rays(numPixels);
-  std::vector<batchedRay> rayData(numPixels);
+  std::vector<RayData> rayData(numPixels);
   
   // Create the initial batch size
   int batchSize = numPixels;
@@ -2135,6 +2132,8 @@ extern "C" void device_render (int* pixels,
 	  batchTileTask((int)i, threadIndex, rays.data(), rayData.data(), width, height, time, camera, numTilesX, numTilesY);
   });
 
+  //ispc::benchmark_wrapper();
+  
   // ************************************************************************ //
   // For loop to trace rays to completion (or until they reach the maximum    //
   //  path depth.                                                             //
@@ -2163,15 +2162,22 @@ extern "C" void device_render (int* pixels,
     // The RTC calculations are isolated from everything else to allow for and
     //  accurate benchmark measurement.
     // ********************************************************************** //
+    auto start = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t i=range.begin(); i<range.end(); i++)
       {
         rtcIntersect1(g_scene,&rayData[i].context.context,RTCRayHit_(rays[i]));
         RayStats_addRay(g_stats[threadIndex]);
+        //RTCIntersectContext* context;
+        //ispc::benchmark_wrapper(batchSize, g_scene, (ispc::RTCIntersectContext*)context, (ispc::v8_varying_RTCRayHit*)rays.data());
       }
     });
- 
+    auto stop = high_resolution_clock::now();
+    auto duration = duration_cast<microseconds>(stop - start);
+    
+    std::cout << "Time Taken: " << duration.count() << std::endl;
+    
     // ********************************************************************** //
     // This function finishes the trace. After this function, the L value for
     //  the given ray should be set. If there are no more samples-per-pixel
