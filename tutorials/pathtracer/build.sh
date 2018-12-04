@@ -118,7 +118,7 @@ g++ -c ../common/tutorial/application.cpp -O3 -D TASKING_TBB -l:libtbb.so -l:lib
 
 
 # Build ISPC wrapper
-ispc --target=avx2 benchmark_wrapper.ispc -o benchmark_wrapper.o -h benchmark_wrapper.h
+ispc -I/tools/Embree/3.2.4/include --target=avx2 benchmark_wrapper.ispc -o benchmark_wrapper.o -h benchmark_wrapper.h
 
 # Create the pathtracer_device object
 g++ pathtracer_device.cpp -I. -O3 -D TASKING_TBB -c -l:libtbb.so -l:libembree3.so -o pathtracer_device.o

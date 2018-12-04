@@ -2161,7 +2161,7 @@ extern "C" void device_render (int* pixels,
     //  accurate benchmark measurement.
     // ********************************************************************** //
     // Pull 8 rays out for testing purposes
-    Ray rayVector[8];
+    /*Ray rayVector[8];
     for(int i = 0; i < 8; ++i)
       rayVector[i] = rays[i];
 
@@ -2171,8 +2171,10 @@ extern "C" void device_render (int* pixels,
       InitIntersectionContext(&contextVector[i]);
       contextVector[i].context.flags =(bounce == 0) ? g_iflags_coherent : g_iflags_incoherent;
     }
-    
-    ispc::benchmark_wrapper(g_scene, (ispc::RTCIntersectContext*)&(contextVector[0].context), (ispc::v8_varying_RTCRayHit*)&rays);
+    printf("size of rays: %d\n", rays.size());
+    printf("this is a seg fault test 1\n");
+    ispc::benchmark_wrapper(g_scene, (ispc::RTCIntersectContext*)&(contextVector[0].context), (ispc::v8_varying_RTCRayHit*)&rayVector);
+    printf("this is a seg fault test 2\n");*/
     
     auto start = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
@@ -2188,8 +2190,9 @@ extern "C" void device_render (int* pixels,
     
     std::cout << "Time Taken: " << duration.count() << std::endl;
     
-    printf("rayVector = tNear = %f\n", rayVector[2].tnear());
-    printf("Rays = tNear = %f\n", rays[2].tnear());
+    //
+    //printf("rayVector = tNear = %f\n", rayVector[2].tnear());
+    //printf("Rays = tNear = %f\n", rays[2].tnear());
     
     // ********************************************************************** //
     // This function finishes the trace. After this function, the L value for

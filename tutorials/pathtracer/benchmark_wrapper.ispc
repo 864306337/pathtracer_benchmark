@@ -2,6 +2,6 @@
 
 export void benchmark_wrapper(RTCScene scene, uniform RTCIntersectContext* uniform context, varying RTCRayHit* uniform rayhit)
 {
-  //print("Running rtcInstersectV\n");
+  print("Running rtcInstersectV\n");
   rtcIntersectV(scene, context, rayhit);
 }
