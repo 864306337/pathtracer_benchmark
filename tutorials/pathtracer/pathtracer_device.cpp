@@ -2131,8 +2131,6 @@ extern "C" void device_render (int* pixels,
     for (size_t i=range.begin(); i<range.end(); i++)
 	  batchTileTask((int)i, threadIndex, rays.data(), rayData.data(), width, height, time, camera, numTilesX, numTilesY);
   });
-
-  //ispc::benchmark_wrapper();
   
   // ************************************************************************ //
   // For loop to trace rays to completion (or until they reach the maximum    //
@@ -2162,6 +2160,20 @@ extern "C" void device_render (int* pixels,
     // The RTC calculations are isolated from everything else to allow for and
     //  accurate benchmark measurement.
     // ********************************************************************** //
+    // Pull 8 rays out for testing purposes
+    Ray rayVector[8];
+    for(int i = 0; i < 8; ++i)
+      rayVector[i] = rays[i];
+
+    IntersectContext contextVector[8];
+    for(int i = 0; i < 8; ++i)
+    {
+      InitIntersectionContext(&contextVector[i]);
+      contextVector[i].context.flags =(bounce == 0) ? g_iflags_coherent : g_iflags_incoherent;
+    }
+    
+    ispc::benchmark_wrapper(g_scene, (ispc::RTCIntersectContext*)&(contextVector[0].context), (ispc::v8_varying_RTCRayHit*)&rays);
+    
     auto start = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
@@ -2169,14 +2181,15 @@ extern "C" void device_render (int* pixels,
       {
         rtcIntersect1(g_scene,&rayData[i].context.context,RTCRayHit_(rays[i]));
         RayStats_addRay(g_stats[threadIndex]);
-        //RTCIntersectContext* context;
-        //ispc::benchmark_wrapper(batchSize, g_scene, (ispc::RTCIntersectContext*)context, (ispc::v8_varying_RTCRayHit*)rays.data());
       }
     });
     auto stop = high_resolution_clock::now();
     auto duration = duration_cast<microseconds>(stop - start);
     
     std::cout << "Time Taken: " << duration.count() << std::endl;
+    
+    printf("rayVector = tNear = %f\n", rayVector[2].tnear());
+    printf("Rays = tNear = %f\n", rays[2].tnear());
     
     // ********************************************************************** //
     // This function finishes the trace. After this function, the L value for
