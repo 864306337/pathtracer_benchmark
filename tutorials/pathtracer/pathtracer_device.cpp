@@ -2160,21 +2160,51 @@ extern "C" void device_render (int* pixels,
     // The RTC calculations are isolated from everything else to allow for and
     //  accurate benchmark measurement.
     // ********************************************************************** //
-    // Pull 8 rays out for testing purposes
-    /*Ray rayVector[8];
-    for(int i = 0; i < 8; ++i)
-      rayVector[i] = rays[i];
-
-    IntersectContext contextVector[8];
-    for(int i = 0; i < 8; ++i)
+    // Variable to adjust for different gang sizes
+    const int gangSize = 8;
+    
+    ispc::v8_varying_RTCRayHit rayVector;
+    ispc::RTCIntersectContext contextVector;
+    
+    // Pull 8 rays out
+    for(int rayIndex = 0; rayIndex < 8; ++rayIndex)
     {
-      InitIntersectionContext(&contextVector[i]);
-      contextVector[i].context.flags =(bounce == 0) ? g_iflags_coherent : g_iflags_incoherent;
+      // Copy Ray information over
+      rayVector.ray.org_x[rayIndex]  = rays[rayIndex].org.x;
+      rayVector.ray.org_y[rayIndex]  = rays[rayIndex].org.y;
+      rayVector.ray.org_z[rayIndex]  = rays[rayIndex].org.z;
+      rayVector.ray.tnear[rayIndex]  = rays[rayIndex].org.w;
+      
+      rayVector.ray.dir_x[rayIndex]  = rays[rayIndex].dir.x;
+      rayVector.ray.dir_y[rayIndex]  = rays[rayIndex].dir.y;
+      rayVector.ray.dir_z[rayIndex]  = rays[rayIndex].dir.z;
+      rayVector.ray.time[rayIndex]   = rays[rayIndex].dir.w;
+      
+      rayVector.ray.tfar[rayIndex]   = rays[rayIndex].tfar;
+      rayVector.ray.mask[rayIndex]   = rays[rayIndex].mask;
+      rayVector.ray.id[rayIndex]     = rays[rayIndex].id;
+      rayVector.ray.flags[rayIndex]  = rays[rayIndex].flags;
+      
+      // Copy Hit information over
+      rayVector.hit.Ng_x[rayIndex]   = rays[rayIndex].Ng.x;
+      rayVector.hit.Ng_y[rayIndex]   = rays[rayIndex].Ng.y;
+      rayVector.hit.Ng_z[rayIndex]   = rays[rayIndex].Ng.z;
+      
+      rayVector.hit.u[rayIndex]      = rays[rayIndex].u;
+      rayVector.hit.v[rayIndex]      = rays[rayIndex].v;
+      
+      rayVector.hit.primID[rayIndex] = rays[rayIndex].primID;
+      rayVector.hit.geomID[rayIndex] = rays[rayIndex].geomID;
+      rayVector.hit.instID[0][rayIndex] = rays[rayIndex].instID;
     }
-    printf("size of rays: %d\n", rays.size());
+    
+    // Set up the context vector
+    contextVector.flags =(bounce == 0) ? ispc::RTC_INTERSECT_CONTEXT_FLAG_COHERENT : ispc::RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
+    
     printf("this is a seg fault test 1\n");
-    ispc::benchmark_wrapper(g_scene, (ispc::RTCIntersectContext*)&(contextVector[0].context), (ispc::v8_varying_RTCRayHit*)&rayVector);
-    printf("this is a seg fault test 2\n");*/
+    //ispc::benchmark_wrapper(g_scene, (ispc::RTCIntersectContext*)&(contextVector[0].context), (ispc::v8_varying_RTCRayHit*)&rayVector);
+    ispc::benchmark_wrapper(g_scene, &contextVector, &rayVector);
+    printf("this is a seg fault test 2\n");
     
     auto start = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
