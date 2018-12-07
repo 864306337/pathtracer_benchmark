@@ -2209,7 +2209,7 @@ extern "C" void device_render (int* pixels,
     
     }
     
-    // This is still being tested
+    
     auto start1 = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(vectorBatchSize),[&](const range<size_t>& range) {
       for (size_t i=range.begin(); i<range.end(); i++)
@@ -2222,7 +2222,7 @@ extern "C" void device_render (int* pixels,
     
     std::cout << "Time Taken - Parallel: " << duration1.count() << std::endl;
     
-    free(rayVector);
+    
     
     auto start = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
@@ -2238,10 +2238,18 @@ extern "C" void device_render (int* pixels,
     
     std::cout << "Time Taken - Serial: " << duration.count() << std::endl;
     
-    //
-    //printf("rayVector = tNear = %f\n", rayVector[2].tnear());
-    //printf("Rays = tNear = %f\n", rays[2].tnear());
+    // ********************************************************************** //
+    // This is a temporary loop to test the functionality of rtcIntersectV
+    // NOTE: Once we are happy, we don't need this anymore.
+    // ********************************************************************** //
+    //int tempRaysIndex = 0;
     
+    //for(int i = 0; i < vectorBatchSize; ++i)
+    //  for(int vectorIndex = 0; vectorIndex < 8; ++vectorIndex)
+    //    if(rayVector[i].ray.tfar[vectorIndex] != rays[tempRaysIndex++].tfar)
+    //      printf("Failed test\n");
+
+    free(rayVector);
     // ********************************************************************** //
     // This function finishes the trace. After this function, the L value for
     //  the given ray should be set. If there are no more samples-per-pixel
