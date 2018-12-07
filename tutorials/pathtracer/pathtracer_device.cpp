@@ -2163,48 +2163,66 @@ extern "C" void device_render (int* pixels,
     // Variable to adjust for different gang sizes
     const int gangSize = 8;
     
-    ispc::v8_varying_RTCRayHit rayVector;
+    //is is just for testing purposes
+    int vectorBatchSize = batchSize/gangSize;
+
+    // Allocate memory for the vectorized batch
+    ispc::v8_varying_RTCRayHit* rayVector = (ispc::v8_varying_RTCRayHit*) aligned_alloc(32, vectorBatchSize * sizeof(ispc::v8_varying_RTCRayHit));
     ispc::RTCIntersectContext contextVector;
-    
-    // Pull 8 rays out
-    for(int rayIndex = 0; rayIndex < 8; ++rayIndex)
+
+    for(int vectorBatchIndex = 0; vectorBatchIndex < vectorBatchSize; ++vectorBatchIndex)
     {
-      // Copy Ray information over
-      rayVector.ray.org_x[rayIndex]  = rays[rayIndex].org.x;
-      rayVector.ray.org_y[rayIndex]  = rays[rayIndex].org.y;
-      rayVector.ray.org_z[rayIndex]  = rays[rayIndex].org.z;
-      rayVector.ray.tnear[rayIndex]  = rays[rayIndex].org.w;
-      
-      rayVector.ray.dir_x[rayIndex]  = rays[rayIndex].dir.x;
-      rayVector.ray.dir_y[rayIndex]  = rays[rayIndex].dir.y;
-      rayVector.ray.dir_z[rayIndex]  = rays[rayIndex].dir.z;
-      rayVector.ray.time[rayIndex]   = rays[rayIndex].dir.w;
-      
-      rayVector.ray.tfar[rayIndex]   = rays[rayIndex].tfar;
-      rayVector.ray.mask[rayIndex]   = rays[rayIndex].mask;
-      rayVector.ray.id[rayIndex]     = rays[rayIndex].id;
-      rayVector.ray.flags[rayIndex]  = rays[rayIndex].flags;
-      
-      // Copy Hit information over
-      rayVector.hit.Ng_x[rayIndex]   = rays[rayIndex].Ng.x;
-      rayVector.hit.Ng_y[rayIndex]   = rays[rayIndex].Ng.y;
-      rayVector.hit.Ng_z[rayIndex]   = rays[rayIndex].Ng.z;
-      
-      rayVector.hit.u[rayIndex]      = rays[rayIndex].u;
-      rayVector.hit.v[rayIndex]      = rays[rayIndex].v;
-      
-      rayVector.hit.primID[rayIndex] = rays[rayIndex].primID;
-      rayVector.hit.geomID[rayIndex] = rays[rayIndex].geomID;
-      rayVector.hit.instID[0][rayIndex] = rays[rayIndex].instID;
+        // Pull 8 rays out
+        for(int vectorIndex = 0; vectorIndex < 8; ++vectorIndex)
+        {
+          // Copy Ray information over
+          rayVector[vectorBatchIndex].ray.org_x[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].org.x;
+          rayVector[vectorBatchIndex].ray.org_y[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].org.y;
+          rayVector[vectorBatchIndex].ray.org_z[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].org.z;
+          rayVector[vectorBatchIndex].ray.tnear[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].org.w;
+          
+          rayVector[vectorBatchIndex].ray.dir_x[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].dir.x;
+          rayVector[vectorBatchIndex].ray.dir_y[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].dir.y;
+          rayVector[vectorBatchIndex].ray.dir_z[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].dir.z;
+          rayVector[vectorBatchIndex].ray.time[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].dir.w;
+          
+          rayVector[vectorBatchIndex].ray.tfar[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].tfar;
+          rayVector[vectorBatchIndex].ray.mask[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].mask;
+          rayVector[vectorBatchIndex].ray.id[vectorIndex]         = rays[(vectorBatchIndex * 8) + vectorIndex].id;
+          rayVector[vectorBatchIndex].ray.flags[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].flags;
+          
+          // Copy Hit information over
+          rayVector[vectorBatchIndex].hit.Ng_x[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].Ng.x;
+          rayVector[vectorBatchIndex].hit.Ng_y[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].Ng.y;
+          rayVector[vectorBatchIndex].hit.Ng_z[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].Ng.z;
+          
+          rayVector[vectorBatchIndex].hit.u[vectorIndex]          = rays[(vectorBatchIndex * 8) + vectorIndex].u;
+          rayVector[vectorBatchIndex].hit.v[vectorIndex]          = rays[(vectorBatchIndex * 8) + vectorIndex].v;
+          
+          rayVector[vectorBatchIndex].hit.primID[vectorIndex]     = rays[(vectorBatchIndex * 8) + vectorIndex].primID;
+          rayVector[vectorBatchIndex].hit.geomID[vectorIndex]     = rays[(vectorBatchIndex * 8) + vectorIndex].geomID;
+          rayVector[vectorBatchIndex].hit.instID[0][vectorIndex]  = rays[(vectorBatchIndex * 8) + vectorIndex].instID;
+        }
+        
+        // Set up the context vector
+        contextVector.flags =(bounce == 0) ? ispc::RTC_INTERSECT_CONTEXT_FLAG_COHERENT : ispc::RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
+    
     }
     
-    // Set up the context vector
-    contextVector.flags =(bounce == 0) ? ispc::RTC_INTERSECT_CONTEXT_FLAG_COHERENT : ispc::RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
+    // This is still being tested
+    auto start1 = high_resolution_clock::now();
+    parallel_for(size_t(0),size_t(vectorBatchSize),[&](const range<size_t>& range) {
+      for (size_t i=range.begin(); i<range.end(); i++)
+      {      
+        ispc::benchmark_wrapper(g_scene, &contextVector, &rayVector[i]);
+      }
+    });
+    auto stop1 = high_resolution_clock::now();
+    auto duration1 = duration_cast<microseconds>(stop1 - start1);
     
-    printf("this is a seg fault test 1\n");
-    //ispc::benchmark_wrapper(g_scene, (ispc::RTCIntersectContext*)&(contextVector[0].context), (ispc::v8_varying_RTCRayHit*)&rayVector);
-    ispc::benchmark_wrapper(g_scene, &contextVector, &rayVector);
-    printf("this is a seg fault test 2\n");
+    std::cout << "Time Taken - Parallel: " << duration1.count() << std::endl;
+    
+    free(rayVector);
     
     auto start = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
@@ -2218,7 +2236,7 @@ extern "C" void device_render (int* pixels,
     auto stop = high_resolution_clock::now();
     auto duration = duration_cast<microseconds>(stop - start);
     
-    std::cout << "Time Taken: " << duration.count() << std::endl;
+    std::cout << "Time Taken - Serial: " << duration.count() << std::endl;
     
     //
     //printf("rayVector = tNear = %f\n", rayVector[2].tnear());
