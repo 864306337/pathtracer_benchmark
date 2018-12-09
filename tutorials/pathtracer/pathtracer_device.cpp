@@ -2288,47 +2288,47 @@ extern "C" void device_render (int* pixels,
     //  for anything other than benchmarking rtcIntersectV.                   //
     // ********************************************************************** //
     // Variable to adjust for different gang sizes.
-    const int gangSize = 8;
+    const int gangSize = 16;
     
     //is is just for testing purposes
     int vectorBatchSize = batchSize/gangSize;
 
     // Allocate memory for the vectorized batch
-    ispc::v8_varying_RTCRayHit* rayVector = (ispc::v8_varying_RTCRayHit*) aligned_alloc(32, vectorBatchSize * sizeof(ispc::v8_varying_RTCRayHit));
+    ispc::v16_varying_RTCRayHit* rayVector = (ispc::v16_varying_RTCRayHit*) aligned_alloc(64, vectorBatchSize * sizeof(ispc::v16_varying_RTCRayHit));
     ispc::RTCIntersectContext contextVector;
 
     for(int vectorBatchIndex = 0; vectorBatchIndex < vectorBatchSize; ++vectorBatchIndex)
     {
         // Pull 8 rays out
-        for(int vectorIndex = 0; vectorIndex < 8; ++vectorIndex)
+        for(int vectorIndex = 0; vectorIndex < gangSize; ++vectorIndex)
         {
           // Copy Ray information over
-          rayVector[vectorBatchIndex].ray.org_x[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].org.x;
-          rayVector[vectorBatchIndex].ray.org_y[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].org.y;
-          rayVector[vectorBatchIndex].ray.org_z[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].org.z;
-          rayVector[vectorBatchIndex].ray.tnear[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].org.w;
+          rayVector[vectorBatchIndex].ray.org_x[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.x;
+          rayVector[vectorBatchIndex].ray.org_y[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.y;
+          rayVector[vectorBatchIndex].ray.org_z[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.z;
+          rayVector[vectorBatchIndex].ray.tnear[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.w;
           
-          rayVector[vectorBatchIndex].ray.dir_x[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].dir.x;
-          rayVector[vectorBatchIndex].ray.dir_y[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].dir.y;
-          rayVector[vectorBatchIndex].ray.dir_z[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].dir.z;
-          rayVector[vectorBatchIndex].ray.time[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].dir.w;
+          rayVector[vectorBatchIndex].ray.dir_x[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].dir.x;
+          rayVector[vectorBatchIndex].ray.dir_y[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].dir.y;
+          rayVector[vectorBatchIndex].ray.dir_z[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].dir.z;
+          rayVector[vectorBatchIndex].ray.time[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].dir.w;
           
-          rayVector[vectorBatchIndex].ray.tfar[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].tfar;
-          rayVector[vectorBatchIndex].ray.mask[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].mask;
-          rayVector[vectorBatchIndex].ray.id[vectorIndex]         = rays[(vectorBatchIndex * 8) + vectorIndex].id;
-          rayVector[vectorBatchIndex].ray.flags[vectorIndex]      = rays[(vectorBatchIndex * 8) + vectorIndex].flags;
+          rayVector[vectorBatchIndex].ray.tfar[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].tfar;
+          rayVector[vectorBatchIndex].ray.mask[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].mask;
+          rayVector[vectorBatchIndex].ray.id[vectorIndex]         = rays[(vectorBatchIndex * gangSize) + vectorIndex].id;
+          rayVector[vectorBatchIndex].ray.flags[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].flags;
           
           // Copy Hit information over
-          rayVector[vectorBatchIndex].hit.Ng_x[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].Ng.x;
-          rayVector[vectorBatchIndex].hit.Ng_y[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].Ng.y;
-          rayVector[vectorBatchIndex].hit.Ng_z[vectorIndex]       = rays[(vectorBatchIndex * 8) + vectorIndex].Ng.z;
+          rayVector[vectorBatchIndex].hit.Ng_x[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].Ng.x;
+          rayVector[vectorBatchIndex].hit.Ng_y[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].Ng.y;
+          rayVector[vectorBatchIndex].hit.Ng_z[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].Ng.z;
           
-          rayVector[vectorBatchIndex].hit.u[vectorIndex]          = rays[(vectorBatchIndex * 8) + vectorIndex].u;
-          rayVector[vectorBatchIndex].hit.v[vectorIndex]          = rays[(vectorBatchIndex * 8) + vectorIndex].v;
+          rayVector[vectorBatchIndex].hit.u[vectorIndex]          = rays[(vectorBatchIndex * gangSize) + vectorIndex].u;
+          rayVector[vectorBatchIndex].hit.v[vectorIndex]          = rays[(vectorBatchIndex * gangSize) + vectorIndex].v;
           
-          rayVector[vectorBatchIndex].hit.primID[vectorIndex]     = rays[(vectorBatchIndex * 8) + vectorIndex].primID;
-          rayVector[vectorBatchIndex].hit.geomID[vectorIndex]     = rays[(vectorBatchIndex * 8) + vectorIndex].geomID;
-          rayVector[vectorBatchIndex].hit.instID[0][vectorIndex]  = rays[(vectorBatchIndex * 8) + vectorIndex].instID;
+          rayVector[vectorBatchIndex].hit.primID[vectorIndex]     = rays[(vectorBatchIndex * gangSize) + vectorIndex].primID;
+          rayVector[vectorBatchIndex].hit.geomID[vectorIndex]     = rays[(vectorBatchIndex * gangSize) + vectorIndex].geomID;
+          rayVector[vectorBatchIndex].hit.instID[0][vectorIndex]  = rays[(vectorBatchIndex * gangSize) + vectorIndex].instID;
         }
         
         // Set up the context vector
