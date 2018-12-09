@@ -1772,10 +1772,11 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
 struct RayData {
   RandomSampler sampler;
   float time;
+  Vec3fa L = Vec3fa(0.0f);
   Vec3fa Lw = Vec3fa(1.0f);
   Medium medium = make_Medium_Vacuum();
   DifferentialGeometry dg;
-  int valid = 1; 
+  unsigned char valid = 1; 
   IntersectContext context;
   unsigned int pixel;
 };
@@ -1793,7 +1794,7 @@ void renderPixelBacthFunction(Ray& ray,
                                 const ISPCCamera& camera,
                                 RayStats& stats,
                                 IntersectContext& context,
-                                int& valid)
+                                unsigned char& valid)
 {
   const Vec3fa wo = neg(ray.dir);
 
@@ -2279,11 +2280,13 @@ extern "C" void device_render (int* pixels,
                                   rayData[taskIndex].Lw,
                                   rayData[taskIndex].medium,
                                   rayData[taskIndex].dg,
-                                  color[myIndex], // TODO: FIX ME
+                                  rayData[taskIndex].L, // TODO: FIX ME
                                   camera,
                                   g_stats[threadIndex],
                                   rayData[taskIndex].context,
                                   rayData[taskIndex].valid);
+        
+        //color[myIndex] = rayData[taskIndex].L;
         
         // If the ray is no longer contributing (significantly) to the coloring of
         //  the pixel, we can stop processing it.
@@ -2300,7 +2303,7 @@ extern "C" void device_render (int* pixels,
     //  find a faster/more efficient way of doing this in the future, but for //
     //  now this is fine.                                                     //
     // ********************************************************************** //
-
+      
     // This is just a custom implementation of the erase-remove idiom.
     //  Doing it this way allows us to use one vector to remove elements from
     //  another. While the order of the vector is not guaranteed, both vectors
@@ -2312,17 +2315,30 @@ extern "C" void device_render (int* pixels,
     auto resultRays = rays.begin();
     
     while (firstRayData != rayData.end()) {
-      if(!(firstRayData->valid == 0))
+      // If a ray is no longer needed, we need to add its contribution for its
+      //  respective pixel. We do it this way because the erase-remove idiom
+      //  involves overwriting invalid data.
+      if((*firstRayData).valid == 0)
       {
+        color[(*firstRayData).pixel] += (*firstRayData).L/g_spp;
+      }
+      // Else, if the ray is still valid then it needs to be written to the front
+      //  of the vector and the result iterator incremented.
+      else {        
         *resultRayData = std::move(*firstRayData);
         ++resultRayData;
         
         *resultRays = std::move(*firstRays);
         ++resultRays;
       }
+      
       ++firstRayData;
       ++firstRays;
     }
+
+    // At this point, the result iterator points to the first invalid element.
+    //  Therefore, we can simply erase all elements from the result iterator
+    //  to the end.
     rayData.erase(resultRayData, rayData.end());
     rays.erase(resultRays, rays.end());
 
@@ -2334,6 +2350,18 @@ extern "C" void device_render (int* pixels,
     batchSize = rays.size();
   }
 
+  // ************************************************************************ //
+  // For the remaining rays, we need to add their contributions to the final  //
+  //  pixel color before moving to shading.                                   //
+  //                                                                          //
+  // TODO: We may need to parallelize this part of the code. Maybe we can add //
+  //  it to the loop below?                                                   //
+  // ************************************************************************ //
+  for(auto it = rayData.begin(); it != rayData.end(); ++it)
+  {
+    color[(*it).pixel] += (*it).L/g_spp;
+  }
+  
   // ************************************************************************ //
   // Loop through all the pixels and color them. Since this is decoupled from //
   //  everything else, we can just process them as tiles.                     //
