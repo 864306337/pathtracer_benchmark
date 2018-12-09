@@ -2320,7 +2320,7 @@ extern "C" void device_render (int* pixels,
       //  involves overwriting invalid data.
       if((*firstRayData).valid == 0)
       {
-        color[(*firstRayData).pixel] += (*firstRayData).L/g_spp;
+        color[(*firstRayData).pixel] += (*firstRayData).L/(float)g_spp;
       }
       // Else, if the ray is still valid then it needs to be written to the front
       //  of the vector and the result iterator incremented.
@@ -2359,7 +2359,7 @@ extern "C" void device_render (int* pixels,
   // ************************************************************************ //
   for(auto it = rayData.begin(); it != rayData.end(); ++it)
   {
-    color[(*it).pixel] += (*it).L/g_spp;
+    color[(*it).pixel] += (*it).L/(float)g_spp;
   }
   
   // ************************************************************************ //
