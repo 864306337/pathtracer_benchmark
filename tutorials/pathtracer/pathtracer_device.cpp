@@ -2211,12 +2211,6 @@ extern "C" void device_render (int* pixels,
   }
   else
     g_accu_count++;
-
-  /************************************************************************************************/
-  // Test printf - this is just an example of how to use printf here
-  //printf("This is just a test\n");
-  //fflush(stdout);
-  /************************************************************************************************/
   
   const int numTilesX = (width +TILE_SIZE_X-1)/TILE_SIZE_X;
   const int numTilesY = (height+TILE_SIZE_Y-1)/TILE_SIZE_Y;
@@ -2252,7 +2246,8 @@ extern "C" void device_render (int* pixels,
   parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
     for (size_t i=range.begin(); i<range.end(); i++)
-	  batchTileTask((int)i, threadIndex, rays.data(), rayData.data(), width, height, time, camera, numTilesX, numTilesY);
+	  batchTileTask((int)i, threadIndex, rays.data(), rayData.data(), width,
+                                    height, time, camera, numTilesX, numTilesY);
   });
   
   // ************************************************************************ //
@@ -2280,15 +2275,19 @@ extern "C" void device_render (int* pixels,
       for (size_t i=range.begin(); i<range.end(); i++)
       {
         InitIntersectionContext(&rayData[i].context);
-        rayData[i].context.context.flags = (bounce == 0) ? g_iflags_coherent : g_iflags_incoherent;
+        rayData[i].context.context.flags = (bounce == 0) ? g_iflags_coherent :
+                                                            g_iflags_incoherent;
       }
     });
 
     // ********************************************************************** //
-    // The RTC calculations are isolated from everything else to allow for and
-    //  accurate benchmark measurement.
+    // The RTC calculations are isolated from everything else to allow for    //
+    //  and accurate benchmark measurement.                                   //
+    //                                                                        //
+    // This first section of code vectorizes the current batch. This isn't    //
+    //  for anything other than benchmarking rtcIntersectV.                   //
     // ********************************************************************** //
-    // Variable to adjust for different gang sizes
+    // Variable to adjust for different gang sizes.
     const int gangSize = 8;
     
     //is is just for testing purposes
@@ -2338,6 +2337,10 @@ extern "C" void device_render (int* pixels,
     }
     
     
+    // ********************************************************************** //
+    // This parallel-for loop is used to benchmark rtcIntersectV. The calc-   //
+    //  ulations done in this loop are not used to render the image.          //
+    // ********************************************************************** //
     auto start1 = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(vectorBatchSize),[&](const range<size_t>& range) {
       for (size_t i=range.begin(); i<range.end(); i++)
@@ -2350,8 +2353,10 @@ extern "C" void device_render (int* pixels,
     
     std::cout << "Time Taken - Parallel: " << duration1.count() << std::endl;
     
-    
-    
+    // ********************************************************************** //
+    // This loop is used to get calculate the intersections used for the      //
+    //  render.                                                               //
+    // ********************************************************************** // 
     auto start = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
@@ -2366,17 +2371,8 @@ extern "C" void device_render (int* pixels,
     
     std::cout << "Time Taken - Serial: " << duration.count() << std::endl;
     
-    // ********************************************************************** //
-    // This is a temporary loop to test the functionality of rtcIntersectV
-    // NOTE: Once we are happy, we don't need this anymore.
-    // ********************************************************************** //
-    //int tempRaysIndex = 0;
-    
-    //for(int i = 0; i < vectorBatchSize; ++i)
-    //  for(int vectorIndex = 0; vectorIndex < 8; ++vectorIndex)
-    //    if(rayVector[i].ray.tfar[vectorIndex] != rays[tempRaysIndex++].tfar)
-    //      printf("Failed test\n");
-
+    // At this time we're done with the vectorized rays. I'll leave this here in
+    //  case we want to compare the two sets of answers.
     free(rayVector);
     
     // ********************************************************************** //
@@ -2399,14 +2395,12 @@ extern "C" void device_render (int* pixels,
                                   rayData[taskIndex].Lw,
                                   rayData[taskIndex].medium,
                                   rayData[taskIndex].dg,
-                                  rayData[taskIndex].L, // TODO: FIX ME
+                                  rayData[taskIndex].L,
                                   camera,
                                   g_stats[threadIndex],
                                   rayData[taskIndex].context,
                                   rayData[taskIndex].valid);
-        
-        //color[myIndex] = rayData[taskIndex].L;
-        
+
         // If the ray is no longer contributing (significantly) to the coloring of
         //  the pixel, we can stop processing it.
         // NOTE: Lw is a weight value
