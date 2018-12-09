@@ -1964,6 +1964,8 @@ void batchTileTask (int taskIndex,
 
       // NOTE: Nothing I try is able to get this to work. When I test it later,
       //  the value stored here does not match what I store in the pixel value.
+      // TODO: It's possible that the ID is not being handled properly, resulting
+      //   in this odd behavior.
       //rays[batch_index].id = batch_index;
     }
   }
@@ -2107,27 +2109,27 @@ extern "C" void device_render (int* pixels,
 
   const int numPixels = height * width;
   
+  // Create the initial batch size
+  int batchSize = numPixels * g_spp;
+ 
   // Allocate memory for pixel colors 
-  Vec3fa *L;
-  L = (Vec3fa*) alignedMalloc(numPixels * sizeof(Vec3fa), 16);
+  Vec3fa *color;
+  color = (Vec3fa*) alignedMalloc(numPixels * sizeof(Vec3fa), 16);
   // If this is NULL, something is very, very wrong.
-  if(L == NULL)
+  if(color == NULL)
   {
-    printf("Error! memory for the L values not allocated.");
+    printf("Error! memory for the color values not allocated.");
     exit(0);
   }
-  //Initialize L values
+  //Initialize color values
   for(int i = 0; i < numPixels; ++i)
   {
-    L[i] = Vec3fa(0.0f);
+    color[i] = Vec3fa(0.0f);
   }
   
   // Create the holders for the initial batch
-  std::vector<Ray> rays(numPixels);
-  std::vector<RayData> rayData(numPixels);
-  
-  // Create the initial batch size
-  int batchSize = numPixels;
+  std::vector<Ray> rays(batchSize);
+  std::vector<RayData> rayData(batchSize);
   
   // ************************************************************************ //
   // Create the initial batch of rays.
@@ -2256,6 +2258,7 @@ extern "C" void device_render (int* pixels,
     //      printf("Failed test\n");
 
     free(rayVector);
+    
     // ********************************************************************** //
     // This function finishes the trace. After this function, the L value for
     //  the given ray should be set. If there are no more samples-per-pixel
@@ -2276,7 +2279,7 @@ extern "C" void device_render (int* pixels,
                                   rayData[taskIndex].Lw,
                                   rayData[taskIndex].medium,
                                   rayData[taskIndex].dg,
-                                  L[myIndex],
+                                  color[myIndex], // TODO: FIX ME
                                   camera,
                                   g_stats[threadIndex],
                                   rayData[taskIndex].context,
@@ -2338,11 +2341,11 @@ extern "C" void device_render (int* pixels,
   parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
     for (size_t i=range.begin(); i<range.end(); i++)
-	  colorPixelsTask((int)i, threadIndex, L, pixels, width, height, numTilesX, numTilesY);
+	  colorPixelsTask((int)i, threadIndex, color, pixels, width, height, numTilesX, numTilesY);
   });
   
-  // Make sure to free L's alloc'd memory
-  alignedFree(L);
+  // Make sure to free color's alloc'd memory
+  alignedFree(color);
   
   //rtcDebug();
 } // device_render
