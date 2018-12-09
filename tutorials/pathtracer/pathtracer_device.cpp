@@ -21,6 +21,10 @@
 #include "../common/tutorial/scene_device.h"
 #include "../common/tutorial/optics.h"
 
+//
+#include <fstream>
+#include <sstream>
+
 // Added for printf
 #include <stdio.h>
 
@@ -1781,6 +1785,8 @@ struct RayData {
   unsigned int pixel;
 };
 
+static bool firstPass = true;
+
 // ***************************************************************************//
 // TODO: Create comment
 // ***************************************************************************//
@@ -1972,6 +1978,114 @@ void batchTileTask (int taskIndex,
   }
 }
 
+// ************************************************************************** //
+// Simple function to record ray batch information into binary files. There   //
+//  should be no white space or new line characters.                          //
+//                                                                            //
+// The file format is as follows:                                             //
+//                                                                            //
+// Rays: <bounce>.rays                                                        //
+//  - Ray ID       : 32-bit int                                               //
+//  - Origin.X     : 32-bit float                                             //
+//  - Origin.Y     : 32-bit float                                             //
+//  - Origin.Z     : 32-bit float                                             //
+//  - Direction.X  : 32-bit float                                             //
+//  - Direction.Y  : 32-bit float                                             //
+//  - Direction.Z  : 32-bit float                                             //
+//                                                                            //
+// Intersections: <bounce>.int                                                //
+//  - Ray ID       : 32-bit int                                               //
+//  - Geometry ID  : 32-bit int                                               //
+//  - Primitive ID : 32-bit int                                               //
+//  - t_far        : 32-bit float                                             //
+// ************************************************************************** //
+void recordBatch(const std::vector<Ray> &rays,
+                  const unsigned int bounce)
+{
+  // We currently don't record all the RayHit information, so this just makes it
+  //  a little easier to record only what we need.
+  typedef struct dataforRays
+  {
+    unsigned int rayID;
+    float org_x;
+    float org_y;
+    float org_z;
+    float dir_x;
+    float dir_y;
+    float dir_z;
+  } raysData;
+
+  typedef struct dataforInt
+  {
+    unsigned int rayID;
+    unsigned int geomID;
+    unsigned int instID;
+    float tfar;
+  } intData;
+
+  // Pull batch size
+  const unsigned int batchSize = rays.size();
+
+  // Create holders for recorded data
+  raysData *recordedRays;
+  recordedRays = (raysData*) malloc(batchSize * sizeof(raysData));
+  // If this is NULL, something is very, very wrong.
+  if(recordedRays == NULL)
+  {
+    printf("Error! memory for the recordedRays values not allocated.");
+    exit(0);
+  }
+  
+  intData *recordedInt;
+  recordedInt = (intData*) malloc(batchSize * sizeof(intData));
+  // If this is NULL, something is very, very wrong.
+  if(recordedInt == NULL)
+  {
+    printf("Error! memory for the recordedInt values not allocated.");
+    exit(0);
+  }
+  
+  // Pull the data out of the rays vector and store them in the record arrays
+  int batchIndex = 0;
+  for(auto it = rays.begin(); it != rays.end(); ++it)
+  {
+    // Get ray data
+    recordedRays[batchIndex].rayID  = (*it).id;
+    recordedRays[batchIndex].org_x  = (*it).org.x;
+    recordedRays[batchIndex].org_y  = (*it).org.y;
+    recordedRays[batchIndex].org_z  = (*it).org.z;
+    recordedRays[batchIndex].dir_x  = (*it).dir.x;
+    recordedRays[batchIndex].dir_y  = (*it).dir.y;
+    recordedRays[batchIndex].dir_z  = (*it).dir.z;
+
+    // Get intersection data
+    recordedInt[batchIndex].rayID   = (*it).id;
+    recordedInt[batchIndex].geomID  = (*it).geomID;
+    recordedInt[batchIndex].instID  = (*it).instID;
+    recordedInt[batchIndex].tfar    = (*it).tfar;
+    
+    ++batchIndex;
+  }
+
+  std::ios_base::sync_with_stdio(false);
+
+  // Create the names for the files
+  std::ostringstream raysFileName;
+  raysFileName << bounce << ".rays";
+
+  std::ostringstream intFileName;
+  intFileName << bounce << ".int";
+
+  // Write all the data to the proper file
+  auto raysFile = std::fstream(raysFileName.str().c_str(), std::ios::out | std::ios::binary);
+  raysFile.write((char*)&recordedRays[0], sizeof(raysData)*batchSize);
+  raysFile.close();
+
+  auto intFile = std::fstream(intFileName.str().c_str(), std::ios::out | std::ios::binary);
+  intFile.write((char*)&recordedInt[0], sizeof(intData)*batchSize);
+  intFile.close();
+}
+
 // ================================================================================================================================
 // ================================================================================================================================
 // ================================================================================================================================
@@ -2150,6 +2264,11 @@ extern "C" void device_render (int* pixels,
     // Just some debug output_iterator
     printf("\nFor bounce %d:\n", bounce);
     printf("batchSize: %d\n", batchSize);
+    
+    if(firstPass)
+    {
+      recordBatch(rays, bounce);
+    }
 
     // ********************************************************************** //
     // This seems really dumb, but I assure you it's for a reason... This     //
@@ -2374,6 +2493,9 @@ extern "C" void device_render (int* pixels,
   
   // Make sure to free color's alloc'd memory
   alignedFree(color);
+  
+  // No longer the first pass
+  firstPass = false;
   
   //rtcDebug();
 } // device_render
