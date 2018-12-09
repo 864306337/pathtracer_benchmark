@@ -1912,8 +1912,7 @@ void colorPixelsTask(int taskIndex,
 
 // ***************************************************************************//
 // After the scene has been divided into tiles, each thread is tasked with    //
-//  creating a ray-per-pixel. For now, we do not support a spp (sample-per-   //
-//  pixel) greater than one.                                                  //
+//  creating a ray-per-pixel.                                                 //
 // ***************************************************************************//
 void batchTileTask (int taskIndex,
                       int threadIndex,
@@ -1937,29 +1936,36 @@ void batchTileTask (int taskIndex,
   // Loop through all the pixels of the given tile, creating a single ray per pixel
   for (unsigned int y = y0; y < y1; ++y) for (unsigned int x = x0; x < x1; ++x)
   {
-    unsigned int batch_index = y * width + x;
-
-	// RandomSampler is used to generate random numbers
-	RandomSampler_init(rayData[batch_index].sampler, (int)x, (int)y, g_accu_count);
-	
-	// Apply the randomization for the ray inputs
-	float fx = x + RandomSampler_get1D(rayData[batch_index].sampler);
-    float fy = y + RandomSampler_get1D(rayData[batch_index].sampler);
-	rayData[batch_index].time = RandomSampler_get1D(rayData[batch_index].sampler);
-
-	// Generate the ray
-	Ray ray(Vec3fa(camera.xfm.p),
-                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,rayData[batch_index].time);
-					 
-	// assign the index value to the ray.id to be used to map ray to pixel
-    rayData[batch_index].pixel = batch_index;
-
-	// Store the ray into the batch where the index represents the pixel position in the frame
-	rays[batch_index] = ray;
     
-    // NOTE: Nothing I try is able to get this to work. When I test it later,
-    //  the value stored here does not match what I store in the pixel value.
-    //rays[batch_index].id = batch_index;
+    unsigned int pixel_index = y * width + x;
+    
+    for(unsigned int sample_index = 0; sample_index < g_spp; ++sample_index)
+    {
+      //
+      unsigned int batch_index = (pixel_index * g_spp) + sample_index;
+
+	  // RandomSampler is used to generate random numbers
+      RandomSampler_init(rayData[batch_index].sampler, (int)x, (int)y, g_accu_count * g_spp + sample_index);
+
+	  // Apply the randomization for the ray inputs
+	  float fx = x + RandomSampler_get1D(rayData[batch_index].sampler);
+      float fy = y + RandomSampler_get1D(rayData[batch_index].sampler);
+	  rayData[batch_index].time = RandomSampler_get1D(rayData[batch_index].sampler);
+
+	  // Generate the ray
+      Ray ray(Vec3fa(camera.xfm.p),
+                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,rayData[batch_index].time);
+
+	  // assign the index value to the ray.id to be used to map ray to pixel
+      rayData[batch_index].pixel = pixel_index;
+
+	  // Store the ray into the batch where the index represents the pixel position in the frame
+      rays[batch_index] = ray;
+
+      // NOTE: Nothing I try is able to get this to work. When I test it later,
+      //  the value stored here does not match what I store in the pixel value.
+      //rays[batch_index].id = batch_index;
+    }
   }
 }
 
