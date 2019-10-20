@@ -1039,7 +1039,7 @@ inline Vec3fa derivBezier(const ISPCHairSet* mesh, const unsigned int primID, co
 {
   Vec3fa p00, p01, p02, p03;
   const int i = mesh->hairs[primID].vertex;
-  
+
   if (mesh->numTimeSteps == 1)
   {
     p00 = mesh->positions[0][i+0];
@@ -1081,7 +1081,7 @@ inline Vec3fa derivHermite(const ISPCHairSet* mesh, const unsigned int primID, c
 {
   Vec3fa p0, p1, t0, t1;
   const int i = mesh->hairs[primID].vertex;
-  
+
   if (mesh->numTimeSteps == 1)
   {
     p0 = mesh->positions[0][i+0];
@@ -1112,7 +1112,7 @@ inline Vec3fa derivHermite(const ISPCHairSet* mesh, const unsigned int primID, c
   const Vec3fa p01 = p0+(1.0f/3.0f)*t0;
   const Vec3fa p02 = p1-(1.0f/3.0f)*t1;
   const Vec3fa p03 = p1;
-    
+
   const float u0 = 1.0f - u, u1 = u;
   const Vec3fa p10 = p00 * u0 + p01 * u1;
   const Vec3fa p11 = p01 * u0 + p02 * u1;
@@ -1127,7 +1127,7 @@ inline Vec3fa derivBSpline(const ISPCHairSet* mesh, const unsigned int primID, c
 {
   Vec3fa p00, p01, p02, p03;
   const int i = mesh->hairs[primID].vertex;
-  
+
   if (mesh->numTimeSteps == 1)
   {
     p00 = mesh->positions[0][i+0];
@@ -1292,7 +1292,7 @@ void postIntersectGeometry(const Ray& ray, DifferentialGeometry& dg, ISPCGeometr
       rtcInterpolate1(mesh->geom.geometry,dg.primID,dg.u,dg.v,RTC_BUFFER_TYPE_VERTEX,0,nullptr,&dPdu.x,&dPdv.x,3);
       dg.Ns = normalize(cross(dPdv,dPdu));
     }
-    
+
     const Vec2f st = getTextureCoordinatesSubdivMesh(mesh,dg.primID,ray.u,ray.v);
     dg.u = st.x;
     dg.v = st.y;
@@ -1306,7 +1306,7 @@ void postIntersectGeometry(const Ray& ray, DifferentialGeometry& dg, ISPCGeometr
   {
     ISPCHairSet* mesh = (ISPCHairSet*) geometry;
     materialID = mesh->geom.materialID;
-    
+
     if (mesh->type == RTC_GEOMETRY_TYPE_FLAT_LINEAR_CURVE)
     {
       dg.Tx = normalize(dg.Ng);
@@ -1441,11 +1441,11 @@ void intersectionFilterOBJ(const RTCFilterFunctionNArguments* args)
   struct RTCRayHitN* _ray = (struct RTCRayHitN*)args->ray;
   struct RTCHitN* hit = args->hit;
   const unsigned int N = args->N;
-  
+
   assert(N == 1);
   bool valid = *((int*) valid_i);
   if (!valid) return;
-  
+
   const unsigned int rayID = 0;
   Ray *ray = (Ray*)_ray;
 
@@ -1481,7 +1481,7 @@ void intersectionFilterOBJ(const RTCFilterFunctionNArguments* args)
     ray->tfar   = tfar;
     // ray->instID = dg.instID;
     // ray->geomID = dg.geomID;
-    // ray->primID = dg.primID;    
+    // ray->primID = dg.primID;
     // ray->u      = dg.u;
     // ray->v      = dg.v;
     // ray->Ng     = Ng;
@@ -1495,13 +1495,13 @@ void occlusionFilterOpaque(const RTCFilterFunctionNArguments* args)
   IntersectContext* context = (IntersectContext*) args->context;
   Vec3fa* transparency = (Vec3fa*) context->userRayExt;
   if (!transparency) return;
-  
+
   int* valid_i = args->valid;
-  
+
   assert(args->N == 1);
   bool valid = *((int*) valid_i);
   if (!valid) return;
-   
+
   *transparency = Vec3fa(0.0f);
 }
 
@@ -1510,16 +1510,16 @@ void occlusionFilterOBJ(const RTCFilterFunctionNArguments* args)
   IntersectContext* context = (IntersectContext*) args->context;
   Vec3fa* transparency = (Vec3fa*) context->userRayExt;
   if (!transparency) return;
-  
+
   int* valid_i = args->valid;
   struct RTCRayHitN* _ray = (struct RTCRayHitN*)args->ray;
   struct RTCHitN* hit = args->hit;
   const unsigned int N = args->N;
-  
+
   assert(N == 1);
   bool valid = *((int*) valid_i);
   if (!valid) return;
-  
+
   const unsigned int rayID = 0;
   Ray *ray = (Ray*)_ray;
 
@@ -1563,17 +1563,17 @@ void occlusionFilterHair(const RTCFilterFunctionNArguments* args)
   IntersectContext* context = (IntersectContext*) args->context;
   Vec3fa* transparency = (Vec3fa*) context->userRayExt;
   if (!transparency) return;
-  
+
   int* valid_i = args->valid;
   struct RTCHitN* hit = args->hit;
   const unsigned int N = args->N;
-  
+
   assert(N == 1);
   bool valid = *((int*) valid_i);
   if (!valid) return;
-  
+
   const unsigned int rayID = 0;
-  
+
   unsigned int hit_geomID = RTCHitN_geomID(hit,N,rayID);
   Vec3fa Kt = Vec3fa(0.0f);
   unsigned int geomID = hit_geomID;
@@ -1609,7 +1609,7 @@ Vec3fa renderPixelFunction(float x, float y, RandomSampler& sampler, const ISPCC
                      Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,time);
 
   DifferentialGeometry dg;
- 
+
   /* iterative path tracer loop */
   for (int i=0; i<g_max_path_length; i++)
   {
@@ -1780,17 +1780,16 @@ struct RayData {
   Vec3fa Lw = Vec3fa(1.0f);
   Medium medium = make_Medium_Vacuum();
   DifferentialGeometry dg;
-  unsigned char valid = 1; 
+  unsigned char valid = 1;
   IntersectContext context;
   unsigned int pixel;
 };
 
-static bool firstPass = true;
 
 // ***************************************************************************//
 // TODO: Create comment
 // ***************************************************************************//
-void renderPixelBacthFunction(Ray& ray,
+void renderPixelBatchFunction(Ray& ray,
                                 RandomSampler& sampler,
                                 float& time,
                                 Vec3fa& Lw,
@@ -1800,7 +1799,7 @@ void renderPixelBacthFunction(Ray& ray,
                                 const ISPCCamera& camera,
                                 RayStats& stats,
                                 IntersectContext& context,
-                                unsigned char& valid)
+                                unsigned char& valid) //typo
 {
   const Vec3fa wo = neg(ray.dir);
 
@@ -1939,13 +1938,13 @@ void batchTileTask (int taskIndex,
   const unsigned int x1 = min(x0+TILE_SIZE_X,width);
   const unsigned int y0 = tileY * TILE_SIZE_Y;
   const unsigned int y1 = min(y0+TILE_SIZE_Y,height);
-  
+
   // Loop through all the pixels of the given tile, creating a single ray per pixel
   for (unsigned int y = y0; y < y1; ++y) for (unsigned int x = x0; x < x1; ++x)
   {
-    
+
     unsigned int pixel_index = y * width + x;
-    
+
     for(unsigned int sample_index = 0; sample_index < g_spp; ++sample_index)
     {
       //
@@ -2035,7 +2034,7 @@ void recordBatch(const std::vector<Ray> &rays,
     printf("Error! memory for the recordedRays values not allocated.");
     exit(0);
   }
-  
+
   intData *recordedInt;
   recordedInt = (intData*) malloc(batchSize * sizeof(intData));
   // If this is NULL, something is very, very wrong.
@@ -2044,7 +2043,7 @@ void recordBatch(const std::vector<Ray> &rays,
     printf("Error! memory for the recordedInt values not allocated.");
     exit(0);
   }
-  
+
   // Pull the data out of the rays vector and store them in the record arrays
   int batchIndex = 0;
   for(auto it = rays.begin(); it != rays.end(); ++it)
@@ -2063,7 +2062,7 @@ void recordBatch(const std::vector<Ray> &rays,
     recordedInt[batchIndex].geomID  = (*it).geomID;
     recordedInt[batchIndex].instID  = (*it).instID;
     recordedInt[batchIndex].tfar    = (*it).tfar;
-    
+
     ++batchIndex;
   }
 
@@ -2071,10 +2070,10 @@ void recordBatch(const std::vector<Ray> &rays,
 
   // Create the names for the files
   std::ostringstream raysFileName;
-  raysFileName << bounce << ".rays";
+  raysFileName << "ray_batch_info/" << bounce << ".ray";
 
   std::ostringstream intFileName;
-  intFileName << bounce << ".int";
+  intFileName << "ray_batch_info/" << bounce << ".int";
 
   // Write all the data to the proper file
   auto raysFile = std::fstream(raysFileName.str().c_str(), std::ios::out | std::ios::binary);
@@ -2143,7 +2142,7 @@ void updateEdgeLevels(ISPCScene* scene_in, const Vec3fa& cam_pos)
     const int threadIndex = (int)TaskScheduler::threadIndex();
     for (size_t i=range.begin(); i<range.end(); i++)
       updateEdgeLevelBufferTask((int)i,threadIndex,mesh,cam_pos);
-  }); 
+  });
 #else
     updateEdgeLevelBuffer(mesh,cam_pos,0,mesh->numFaces);
 #endif
@@ -2167,6 +2166,7 @@ extern "C" void device_init (char* cfg)
 
 } // device_init
 
+
 /* called by the C++ code to render */
 extern "C" void device_render (int* pixels,
                            const unsigned int width,
@@ -2184,10 +2184,10 @@ extern "C" void device_render (int* pixels,
   /* create accumulator */
   if (g_accu_width != width || g_accu_height != height) {
     alignedFree(g_accu);
-    g_accu = (Vec3fa*) alignedMalloc(width*height*sizeof(Vec3fa),16);
+    g_accu = (Vec3fa*) alignedMalloc(width * height * sizeof(Vec3fa), 16);
     g_accu_width = width;
     g_accu_height = height;
-    for (unsigned int i=0; i<width*height; i++)
+    for (unsigned int i = 0; i < g_accu_width * g_accu_height; i++)
       g_accu[i] = Vec3fa(0.0f);
   }
 
@@ -2201,7 +2201,7 @@ extern "C" void device_render (int* pixels,
   if (camera_changed)
   {
     g_accu_count=0;
-    for (unsigned int i=0; i<width*height; i++)
+    for (unsigned int i=0; i< g_accu_width * g_accu_height; i++)
       g_accu[i] = Vec3fa(0.0f);
 
     if (g_subdiv_mode) {
@@ -2211,17 +2211,17 @@ extern "C" void device_render (int* pixels,
   }
   else
     g_accu_count++;
-  
-  const int numTilesX = (width +TILE_SIZE_X-1)/TILE_SIZE_X;
-  const int numTilesY = (height+TILE_SIZE_Y-1)/TILE_SIZE_Y;
+
+  const int numTilesX = (width + TILE_SIZE_X - 1) / TILE_SIZE_X;
+  const int numTilesY = (height + TILE_SIZE_Y - 1) / TILE_SIZE_Y;
   const int numTiles  = numTilesX * numTilesY;
 
   const int numPixels = height * width;
-  
+
   // Create the initial batch size
   int batchSize = numPixels * g_spp;
- 
-  // Allocate memory for pixel colors 
+
+  // Allocate memory for pixel colors
   Vec3fa *color;
   color = (Vec3fa*) alignedMalloc(numPixels * sizeof(Vec3fa), 16);
   // If this is NULL, something is very, very wrong.
@@ -2231,35 +2231,40 @@ extern "C" void device_render (int* pixels,
     exit(0);
   }
   //Initialize color values
-  for(int i = 0; i < numPixels; ++i)
+  for(unsigned int i = 0; i < numPixels; ++i)
   {
     color[i] = Vec3fa(0.0f);
   }
-  
+
   // Create the holders for the initial batch
   std::vector<Ray> rays(batchSize);
   std::vector<RayData> rayData(batchSize);
-  
+
   // ************************************************************************ //
   // Create the initial batch of rays.
   // ************************************************************************ //
-  parallel_for(size_t(0),size_t(numTiles),[&](const range<size_t>& range) {
+  parallel_for(size_t(0), size_t(numTiles), [&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
     for (size_t i=range.begin(); i<range.end(); i++)
 	  batchTileTask((int)i, threadIndex, rays.data(), rayData.data(), width,
                                     height, time, camera, numTilesX, numTilesY);
   });
-  
+
+  bool firstPass = true; //This was 'static'. Not sure why, may need to undo.
+  bool printData = false; //Controls output to the console
+
   // ************************************************************************ //
   // For loop to trace rays to completion (or until they reach the maximum    //
   //  path depth.                                                             //
   // ************************************************************************ //
-  for (int bounce = 0; bounce < g_max_path_length; bounce++)
+  for (unsigned int bounce = 0; bounce < g_max_path_length; bounce++)
   {
     // Just some debug output_iterator
-    printf("\nFor bounce %d:\n", bounce);
-    printf("batchSize: %d\n", batchSize);
-    
+    if(printData) {
+      std::cout << "For bounce " << bounce << ":\n";
+      std::cout << "batchSize: " << batchSize << "\n";
+    }
+
     if(firstPass)
     {
       recordBatch(rays, bounce);
@@ -2289,75 +2294,75 @@ extern "C" void device_render (int* pixels,
     // ********************************************************************** //
     // Variable to adjust for different gang sizes.
     const int gangSize = 16;
-    
-    //is is just for testing purposes
+
+    //this is just for testing purposes
     int vectorBatchSize = batchSize/gangSize;
 
     // Allocate memory for the vectorized batch
     ispc::v16_varying_RTCRayHit* rayVector = (ispc::v16_varying_RTCRayHit*) aligned_alloc(64, vectorBatchSize * sizeof(ispc::v16_varying_RTCRayHit));
     ispc::RTCIntersectContext contextVector;
 
-    for(int vectorBatchIndex = 0; vectorBatchIndex < vectorBatchSize; ++vectorBatchIndex)
+    for(unsigned int vectorBatchIndex = 0; vectorBatchIndex < vectorBatchSize; ++vectorBatchIndex)
     {
         // Pull 8 rays out
-        for(int vectorIndex = 0; vectorIndex < gangSize; ++vectorIndex)
+        for(unsigned int vectorIndex = 0; vectorIndex < gangSize; ++vectorIndex)
         {
           // Copy Ray information over
           rayVector[vectorBatchIndex].ray.org_x[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.x;
           rayVector[vectorBatchIndex].ray.org_y[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.y;
           rayVector[vectorBatchIndex].ray.org_z[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.z;
           rayVector[vectorBatchIndex].ray.tnear[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.w;
-          
+
           rayVector[vectorBatchIndex].ray.dir_x[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].dir.x;
           rayVector[vectorBatchIndex].ray.dir_y[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].dir.y;
           rayVector[vectorBatchIndex].ray.dir_z[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].dir.z;
           rayVector[vectorBatchIndex].ray.time[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].dir.w;
-          
+
           rayVector[vectorBatchIndex].ray.tfar[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].tfar;
           rayVector[vectorBatchIndex].ray.mask[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].mask;
           rayVector[vectorBatchIndex].ray.id[vectorIndex]         = rays[(vectorBatchIndex * gangSize) + vectorIndex].id;
           rayVector[vectorBatchIndex].ray.flags[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].flags;
-          
+
           // Copy Hit information over
           rayVector[vectorBatchIndex].hit.Ng_x[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].Ng.x;
           rayVector[vectorBatchIndex].hit.Ng_y[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].Ng.y;
           rayVector[vectorBatchIndex].hit.Ng_z[vectorIndex]       = rays[(vectorBatchIndex * gangSize) + vectorIndex].Ng.z;
-          
+
           rayVector[vectorBatchIndex].hit.u[vectorIndex]          = rays[(vectorBatchIndex * gangSize) + vectorIndex].u;
           rayVector[vectorBatchIndex].hit.v[vectorIndex]          = rays[(vectorBatchIndex * gangSize) + vectorIndex].v;
-          
+
           rayVector[vectorBatchIndex].hit.primID[vectorIndex]     = rays[(vectorBatchIndex * gangSize) + vectorIndex].primID;
           rayVector[vectorBatchIndex].hit.geomID[vectorIndex]     = rays[(vectorBatchIndex * gangSize) + vectorIndex].geomID;
           rayVector[vectorBatchIndex].hit.instID[0][vectorIndex]  = rays[(vectorBatchIndex * gangSize) + vectorIndex].instID;
         }
-        
+
         // Set up the context vector
         contextVector.flags =(bounce == 0) ? ispc::RTC_INTERSECT_CONTEXT_FLAG_COHERENT : ispc::RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
-    
+
     }
-    
-    
+
+
     // ********************************************************************** //
     // This parallel-for loop is used to benchmark rtcIntersectV. The calc-   //
     //  ulations done in this loop are not used to render the image.          //
     // ********************************************************************** //
-    auto start1 = high_resolution_clock::now();
+    auto benchStart = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(vectorBatchSize),[&](const range<size_t>& range) {
       for (size_t i=range.begin(); i<range.end(); i++)
-      {      
+      {
         ispc::benchmark_wrapper(g_scene, &contextVector, &rayVector[i]);
       }
     });
-    auto stop1 = high_resolution_clock::now();
-    auto duration1 = duration_cast<microseconds>(stop1 - start1);
-    
-    std::cout << "Time Taken - Parallel: " << duration1.count() << std::endl;
-    
+    auto benchStop = high_resolution_clock::now();
+    auto duration1 = duration_cast<microseconds>(benchStop - benchStart);
+
+    if(printData) std::cout << "Time Taken - Parallel: " << duration1.count() << "\n";
+
     // ********************************************************************** //
     // This loop is used to get calculate the intersections used for the      //
     //  render.                                                               //
-    // ********************************************************************** // 
-    auto start = high_resolution_clock::now();
+    // ********************************************************************** //
+    auto renderStart = high_resolution_clock::now();
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t i=range.begin(); i<range.end(); i++)
@@ -2366,15 +2371,15 @@ extern "C" void device_render (int* pixels,
         RayStats_addRay(g_stats[threadIndex]);
       }
     });
-    auto stop = high_resolution_clock::now();
-    auto duration = duration_cast<microseconds>(stop - start);
-    
-    std::cout << "Time Taken - Serial: " << duration.count() << std::endl;
-    
+    auto renderStop = high_resolution_clock::now();
+    auto duration = duration_cast<microseconds>(renderStop - renderStart);
+
+    if(printData) std::cout << "Time Taken - Serial: " << duration.count() << "\n";
+
     // At this time we're done with the vectorized rays. I'll leave this here in
     //  case we want to compare the two sets of answers.
     free(rayVector);
-    
+
     // ********************************************************************** //
     // This function finishes the trace. After this function, the L value for
     //  the given ray should be set. If there are no more samples-per-pixel
@@ -2383,13 +2388,13 @@ extern "C" void device_render (int* pixels,
     parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t taskIndex=range.begin(); taskIndex<range.end(); taskIndex++)
-      {  
+      {
         // This just makes the code a little cleaner
-        int myIndex = rayData[taskIndex].pixel;
+        // int myIndex = rayData[taskIndex].pixel;
 
         // Calling this function populates the L value with the proper color of
         //  the pixel.
-        renderPixelBacthFunction(rays[taskIndex],
+        renderPixelBatchFunction(rays[taskIndex],
                                   rayData[taskIndex].sampler,
                                   rayData[taskIndex].time,
                                   rayData[taskIndex].Lw,
@@ -2410,41 +2415,41 @@ extern "C" void device_render (int* pixels,
         }
       }
     });
-    
+
     // ********************************************************************** //
     // Remove the rays that no longer need to be traced. We might be able to  //
     //  find a faster/more efficient way of doing this in the future, but for //
     //  now this is fine.                                                     //
     // ********************************************************************** //
-      
+
     // This is just a custom implementation of the erase-remove idiom.
     //  Doing it this way allows us to use one vector to remove elements from
     //  another. While the order of the vector is not guaranteed, both vectors
     //  should remain relatively synchronized.
     auto firstRayData = rayData.begin();
     auto resultRayData = rayData.begin();
-    
+
     auto firstRays = rays.begin();
     auto resultRays = rays.begin();
-    
+
     while (firstRayData != rayData.end()) {
       // If a ray is no longer needed, we need to add its contribution for its
       //  respective pixel. We do it this way because the erase-remove idiom
       //  involves overwriting invalid data.
-      if((*firstRayData).valid == 0)
+      if(firstRayData->valid == 0)
       {
-        color[(*firstRayData).pixel] += (*firstRayData).L/(float)g_spp;
+        color[firstRayData->pixel] += firstRayData->L / (float)g_spp;
       }
       // Else, if the ray is still valid then it needs to be written to the front
       //  of the vector and the result iterator incremented.
-      else {        
+      else {
         *resultRayData = std::move(*firstRayData);
         ++resultRayData;
-        
+
         *resultRays = std::move(*firstRays);
         ++resultRays;
       }
-      
+
       ++firstRayData;
       ++firstRays;
     }
@@ -2458,10 +2463,12 @@ extern "C" void device_render (int* pixels,
     // If there are no more rays, then we can color the scene.
     if(rays.empty())
         break;
-    
+
     // Update the batchSize for the next loop iteration.
     batchSize = rays.size();
-  }
+  } //end of for loop
+
+  firstPass = false;
 
   // ************************************************************************ //
   // For the remaining rays, we need to add their contributions to the final  //
@@ -2472,9 +2479,9 @@ extern "C" void device_render (int* pixels,
   // ************************************************************************ //
   for(auto it = rayData.begin(); it != rayData.end(); ++it)
   {
-    color[(*it).pixel] += (*it).L/(float)g_spp;
+    color[it->pixel] += it->L / (float)g_spp;
   }
-  
+
   // ************************************************************************ //
   // Loop through all the pixels and color them. Since this is decoupled from //
   //  everything else, we can just process them as tiles.                     //
@@ -2484,15 +2491,12 @@ extern "C" void device_render (int* pixels,
     for (size_t i=range.begin(); i<range.end(); i++)
 	  colorPixelsTask((int)i, threadIndex, color, pixels, width, height, numTilesX, numTilesY);
   });
-  
-  // Make sure to free color's alloc'd memory
+
+  // Finished with color
   alignedFree(color);
-  
-  // No longer the first pass
-  firstPass = false;
-  
+
   //rtcDebug();
-} // device_render
+} // end of device_render
 
 /* called by the C++ code for cleanup */
 extern "C" void device_cleanup ()
