@@ -21,12 +21,9 @@
 #include "../common/tutorial/scene_device.h"
 #include "../common/tutorial/optics.h"
 
-//
+//for file IO and string parsing (of config.txt)
 #include <fstream>
-#include <sstream>
-
-// Added for printf
-#include <stdio.h>
+#include <string>
 
 // Added to get times
 #include <chrono>
@@ -58,6 +55,13 @@ extern "C" bool g_accumulate;
 
 bool g_subdiv_mode = false;
 unsigned int keyframeID = 0;
+
+/*Data in config.txt*/
+bool printData = false; //Controls output to the console
+bool outputRender = true; //Controls visual output to screen
+
+
+
 
 struct BRDF
 {
@@ -1787,7 +1791,7 @@ struct RayData {
 
 
 // ***************************************************************************//
-// TODO: Create comment
+// Populates the L value with the proper color of the pixel.
 // ***************************************************************************//
 void renderPixelBatchFunction(Ray& ray,
                                 RandomSampler& sampler,
@@ -1799,26 +1803,23 @@ void renderPixelBatchFunction(Ray& ray,
                                 const ISPCCamera& camera,
                                 RayStats& stats,
                                 IntersectContext& context,
-                                unsigned char& valid) //typo
+                                unsigned char& valid)
 {
-  const Vec3fa wo = neg(ray.dir);
-
   /* invoke environment lights if nothing hit */
   if (ray.geomID == RTC_INVALID_GEOMETRY_ID)
   {
     //L = L + Lw*Vec3fa(1.0f);
 
     /* iterate over all lights */
-    for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
+    for (unsigned int i = 0; i < g_ispc_scene->numLights; i++)
     {
-      const Light* l = g_ispc_scene->lights[i];
-      Light_EvalRes le = l->eval(l,dg,ray.dir);
-      L = L + Lw*le.value;
+      const Light* light = g_ispc_scene->lights[i];
+      Light_EvalRes le = light->eval(light, dg, ray.dir);
+      L += Lw * le.value;
     }
 
     valid = 0;
     return;
-
   }
 
   Vec3fa Ns = normalize(ray.Ng);
@@ -1846,6 +1847,7 @@ void renderPixelBatchFunction(Ray& ray,
   BRDF brdf;
   int numMaterials = g_ispc_scene->numMaterials;
   ISPCMaterial** material_array = &g_ispc_scene->materials[0];
+  const Vec3fa wo = neg(ray.dir);
   Material__preprocess(material_array,materialID,numMaterials,brdf,wo,dg,medium);
 
   /* sample BRDF at hit point */
@@ -1854,19 +1856,19 @@ void renderPixelBatchFunction(Ray& ray,
 
   /* iterate over lights */
   context.context.flags = g_iflags_incoherent;
-  for (unsigned int i=0; i<g_ispc_scene->numLights; i++)
+  for (unsigned int i=0; i < g_ispc_scene->numLights; i++)
   {
-    const Light* l = g_ispc_scene->lights[i];
-    Light_SampleRes ls = l->sample(l,dg,RandomSampler_get2D(sampler));
+    const Light* light = g_ispc_scene->lights[i];
+    Light_SampleRes ls = light->sample(light, dg, RandomSampler_get2D(sampler));
     if (ls.pdf <= 0.0f) continue;
     Vec3fa transparency = Vec3fa(1.0f);
-    Ray shadow(dg.P,ls.dir,dg.eps,ls.dist,time);
+    Ray shadow(dg.P, ls.dir, dg.eps, ls.dist, time);
     context.userRayExt = &transparency;
-    rtcOccluded1(g_scene,&context.context,RTCRay_(shadow));
+    rtcOccluded1(g_scene, &context.context, RTCRay_(shadow));
     RayStats_addShadowRay(stats);
     //if (shadow.geomID != RTC_INVALID_GEOMETRY_ID) continue;
     if (max(max(transparency.x,transparency.y),transparency.z) > 0.0f)
-      L = L + Lw*ls.weight*transparency*Material__eval(material_array,materialID,numMaterials,brdf,wo,dg,ls.dir);
+      L += Lw * ls.weight * transparency * Material__eval(material_array, materialID, numMaterials, brdf, wo, dg, ls.dir);
   }
 
   if (wi1.pdf <= 1E-4f /* 0.0f */)
@@ -1874,12 +1876,12 @@ void renderPixelBatchFunction(Ray& ray,
     valid = 0;
     return;
   }
-  Lw = Lw*c/wi1.pdf;
+  Lw *= c / wi1.pdf;
 
   /* setup secondary ray */
-  float sign = dot(wi1.v,dg.Ng) < 0.0f ? -1.0f : 1.0f;
-  dg.P = dg.P + sign*dg.eps*dg.Ng;
-  init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
+  float sign = dot(wi1.v, dg.Ng) < 0.0f ? -1.0f : 1.0f;
+  dg.P += sign * dg.eps * dg.Ng;
+  init_Ray(ray, dg.P, normalize(wi1.v), dg.eps, inf, time);
 }
 
 // ***************************************************************************//
@@ -1935,37 +1937,36 @@ void batchTileTask (int taskIndex,
   const unsigned int tileY = taskIndex / numTilesX;
   const unsigned int tileX = taskIndex - tileY * numTilesX;
   const unsigned int x0 = tileX * TILE_SIZE_X;
-  const unsigned int x1 = min(x0+TILE_SIZE_X,width);
+  const unsigned int x1 = min(x0 + TILE_SIZE_X, width);
   const unsigned int y0 = tileY * TILE_SIZE_Y;
-  const unsigned int y1 = min(y0+TILE_SIZE_Y,height);
+  const unsigned int y1 = min(y0 + TILE_SIZE_Y, height);
 
   // Loop through all the pixels of the given tile, creating a single ray per pixel
-  for (unsigned int y = y0; y < y1; ++y) for (unsigned int x = x0; x < x1; ++x)
+  for (unsigned int y = y0; y < y1; y++) for (unsigned int x = x0; x < x1; x++)
   {
+    const unsigned int pixel_index = y * width + x;
 
-    unsigned int pixel_index = y * width + x;
-
-    for(unsigned int sample_index = 0; sample_index < g_spp; ++sample_index)
+    for(unsigned int sample_index = 0; sample_index < g_spp; sample_index++)
     {
-      //
       unsigned int batch_index = (pixel_index * g_spp) + sample_index;
 
-	  // RandomSampler is used to generate random numbers
+	    // RandomSampler is used to generate random numbers
       RandomSampler_init(rayData[batch_index].sampler, (int)x, (int)y, g_accu_count * g_spp + sample_index);
 
-	  // Apply the randomization for the ray inputs
-	  float fx = x + RandomSampler_get1D(rayData[batch_index].sampler);
+	    // Apply the randomization for the ray inputs
+	    float fx = x + RandomSampler_get1D(rayData[batch_index].sampler);
       float fy = y + RandomSampler_get1D(rayData[batch_index].sampler);
-	  rayData[batch_index].time = RandomSampler_get1D(rayData[batch_index].sampler);
+	    rayData[batch_index].time = RandomSampler_get1D(rayData[batch_index].sampler);
 
-	  // Generate the ray
+	    // Generate the ray
       Ray ray(Vec3fa(camera.xfm.p),
-                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),0.0f,inf,rayData[batch_index].time);
+                     Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)),
+                     0.0f, inf, rayData[batch_index].time);
 
-	  // assign the index value to the ray.id to be used to map ray to pixel
+	    // assign the index value to the ray.id to be used to map ray to pixel
       rayData[batch_index].pixel = pixel_index;
 
-	  // Store the ray into the batch where the index represents the pixel position in the frame
+	    // Store the ray into the batch where the index represents the pixel position in the frame
       rays[batch_index] = ray;
 
       // NOTE: Nothing I try is able to get this to work. When I test it later,
@@ -1998,12 +1999,11 @@ void batchTileTask (int taskIndex,
 //  - Primitive ID : 32-bit int                                               //
 //  - t_far        : 32-bit float                                             //
 // ************************************************************************** //
-void recordBatch(const std::vector<Ray> &rays,
-                  const unsigned int bounce)
+void recordBatch(const std::vector<Ray> &rays, const unsigned int bounce)
 {
   // We currently don't record all the RayHit information, so this just makes it
   //  a little easier to record only what we need.
-  typedef struct dataforRays
+  struct raysData
   {
     unsigned int rayID;
     float org_x;
@@ -2012,17 +2012,16 @@ void recordBatch(const std::vector<Ray> &rays,
     float dir_x;
     float dir_y;
     float dir_z;
-  } raysData;
+  };
 
-  typedef struct dataforInt
+  struct intersectData
   {
     unsigned int rayID;
     unsigned int geomID;
     unsigned int instID;
     float tfar;
-  } intData;
+  };
 
-  // Pull batch size
   const unsigned int batchSize = rays.size();
 
   // Create holders for recorded data
@@ -2031,37 +2030,37 @@ void recordBatch(const std::vector<Ray> &rays,
   // If this is NULL, something is very, very wrong.
   if(recordedRays == NULL)
   {
-    printf("Error! memory for the recordedRays values not allocated.");
+    std::cout << "Error! memory for the recordedRays values not allocated." << std::endl;
     exit(0);
   }
 
-  intData *recordedInt;
-  recordedInt = (intData*) malloc(batchSize * sizeof(intData));
+  intersectData *recordedInt;
+  recordedInt = (intersectData*) malloc(batchSize * sizeof(intersectData));
   // If this is NULL, something is very, very wrong.
   if(recordedInt == NULL)
   {
-    printf("Error! memory for the recordedInt values not allocated.");
+    std::cout << "Error! memory for the recordedInt values not allocated." << std::endl;
     exit(0);
   }
 
   // Pull the data out of the rays vector and store them in the record arrays
-  int batchIndex = 0;
-  for(auto it = rays.begin(); it != rays.end(); ++it)
+  unsigned int batchIndex = 0;
+  for(auto it = rays.begin(); it != rays.end(); ++it) //Could we just iterate through recordedRays?
   {
     // Get ray data
-    recordedRays[batchIndex].rayID  = (*it).id;
-    recordedRays[batchIndex].org_x  = (*it).org.x;
-    recordedRays[batchIndex].org_y  = (*it).org.y;
-    recordedRays[batchIndex].org_z  = (*it).org.z;
-    recordedRays[batchIndex].dir_x  = (*it).dir.x;
-    recordedRays[batchIndex].dir_y  = (*it).dir.y;
-    recordedRays[batchIndex].dir_z  = (*it).dir.z;
+    recordedRays[batchIndex].rayID  = it->id;
+    recordedRays[batchIndex].org_x  = it->org.x; //org is a vec3fa. Review copy constructors of it.
+    recordedRays[batchIndex].org_y  = it->org.y;
+    recordedRays[batchIndex].org_z  = it->org.z;
+    recordedRays[batchIndex].dir_x  = it->dir.x;
+    recordedRays[batchIndex].dir_y  = it->dir.y;
+    recordedRays[batchIndex].dir_z  = it->dir.z;
 
     // Get intersection data
-    recordedInt[batchIndex].rayID   = (*it).id;
-    recordedInt[batchIndex].geomID  = (*it).geomID;
-    recordedInt[batchIndex].instID  = (*it).instID;
-    recordedInt[batchIndex].tfar    = (*it).tfar;
+    recordedInt[batchIndex].rayID   = it->id;
+    recordedInt[batchIndex].geomID  = it->geomID;
+    recordedInt[batchIndex].instID  = it->instID;
+    recordedInt[batchIndex].tfar    = it->tfar;
 
     ++batchIndex;
   }
@@ -2081,7 +2080,7 @@ void recordBatch(const std::vector<Ray> &rays,
   raysFile.close();
 
   auto intFile = std::fstream(intFileName.str().c_str(), std::ios::out | std::ios::binary);
-  intFile.write((char*)&recordedInt[0], sizeof(intData)*batchSize);
+  intFile.write((char*)&recordedInt[0], sizeof(intersectData)*batchSize);
   intFile.close();
 }
 
@@ -2164,6 +2163,34 @@ extern "C" void device_init (char* cfg)
   renderTile = renderTileStandard;
   key_pressed_handler = device_key_pressed_handler;
 
+  /*get configuration info*/
+  std::ifstream configFile("config.txt");
+  std::string line;
+  //Holds the values of the options.
+  bool vals[2];
+  unsigned int i = 0;
+  while(std::getline(configFile, line)) {
+    if(line[0] != ';') {
+      try {
+        vals[i] = std::stoi(line);
+        // std::cout << vals[i] << std::endl;
+      }
+      catch(const std::exception& e) {
+        std::cout << "Something went wrong in reading the config file." << std::endl;
+        std::cout << e.what() << std::endl;
+        exit(0);
+      }
+      i++;
+    }
+    // else {
+    //   std:: cout << line << std::endl;
+    // }
+  } //end of while
+
+  //assign the options to the variables
+  outputRender = vals[0];
+  printData = vals[1];
+  configFile.close();
 } // device_init
 
 
@@ -2200,8 +2227,8 @@ extern "C" void device_render (int* pixels,
 
   if (camera_changed)
   {
-    g_accu_count=0;
-    for (unsigned int i=0; i< g_accu_width * g_accu_height; i++)
+    g_accu_count = 0;
+    for (unsigned int i = 0; i < g_accu_width * g_accu_height; i++)
       g_accu[i] = Vec3fa(0.0f);
 
     if (g_subdiv_mode) {
@@ -2212,8 +2239,8 @@ extern "C" void device_render (int* pixels,
   else
     g_accu_count++;
 
-  const int numTilesX = (width + TILE_SIZE_X - 1) / TILE_SIZE_X;
-  const int numTilesY = (height + TILE_SIZE_Y - 1) / TILE_SIZE_Y;
+  const int numTilesX = (width + TILE_SIZE_X - 1) / TILE_SIZE_X,
+            numTilesY = (height + TILE_SIZE_Y - 1) / TILE_SIZE_Y;
   const int numTiles  = numTilesX * numTilesY;
 
   const int numPixels = height * width;
@@ -2227,11 +2254,11 @@ extern "C" void device_render (int* pixels,
   // If this is NULL, something is very, very wrong.
   if(color == NULL)
   {
-    printf("Error! memory for the color values not allocated.");
+    std::cout << "Error! memory for the color values not allocated." << std::endl;
     exit(0);
   }
   //Initialize color values
-  for(unsigned int i = 0; i < numPixels; ++i)
+  for(unsigned int i = 0; i < numPixels; i++)
   {
     color[i] = Vec3fa(0.0f);
   }
@@ -2245,13 +2272,12 @@ extern "C" void device_render (int* pixels,
   // ************************************************************************ //
   parallel_for(size_t(0), size_t(numTiles), [&](const range<size_t>& range) {
     const int threadIndex = (int)TaskScheduler::threadIndex();
-    for (size_t i=range.begin(); i<range.end(); i++)
-	  batchTileTask((int)i, threadIndex, rays.data(), rayData.data(), width,
+    for (size_t i = range.begin(); i < range.end(); i++)
+	   batchTileTask((int)i, threadIndex, rays.data(), rayData.data(), width,
                                     height, time, camera, numTilesX, numTilesY);
   });
 
   bool firstPass = true; //This was 'static'. Not sure why, may need to undo.
-  bool printData = false; //Controls output to the console
 
   // ************************************************************************ //
   // For loop to trace rays to completion (or until they reach the maximum    //
@@ -2261,8 +2287,8 @@ extern "C" void device_render (int* pixels,
   {
     // Just some debug output_iterator
     if(printData) {
-      std::cout << "For bounce " << bounce << ":\n";
-      std::cout << "batchSize: " << batchSize << "\n";
+      std::cout << "For bounce " << bounce << ":" << std::endl;
+      std::cout << "\tBatch Size: " << batchSize << std::endl;
     }
 
     if(firstPass)
@@ -2296,19 +2322,18 @@ extern "C" void device_render (int* pixels,
     const int gangSize = 16;
 
     //this is just for testing purposes
-    int vectorBatchSize = batchSize/gangSize;
+    const int vectorBatchSize = batchSize/gangSize;
 
     // Allocate memory for the vectorized batch
-    ispc::v16_varying_RTCRayHit* rayVector = (ispc::v16_varying_RTCRayHit*) aligned_alloc(64, vectorBatchSize * sizeof(ispc::v16_varying_RTCRayHit));
-    ispc::RTCIntersectContext contextVector;
+    ispc::v16_varying_RTCRayHit *rayVector = (ispc::v16_varying_RTCRayHit*) aligned_alloc(64, vectorBatchSize * sizeof(ispc::v16_varying_RTCRayHit));
 
-    for(unsigned int vectorBatchIndex = 0; vectorBatchIndex < vectorBatchSize; ++vectorBatchIndex)
+    for(unsigned int vectorBatchIndex = 0; vectorBatchIndex < vectorBatchSize; vectorBatchIndex++)
     {
         // Pull 8 rays out
-        for(unsigned int vectorIndex = 0; vectorIndex < gangSize; ++vectorIndex)
+        for(unsigned int vectorIndex = 0; vectorIndex < gangSize; vectorIndex++)
         {
           // Copy Ray information over
-          rayVector[vectorBatchIndex].ray.org_x[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.x;
+          rayVector[vectorBatchIndex].ray.org_x[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.x; //Org is a Vec3fa (16 bytes). Copy constructor?
           rayVector[vectorBatchIndex].ray.org_y[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.y;
           rayVector[vectorBatchIndex].ray.org_z[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.z;
           rayVector[vectorBatchIndex].ray.tnear[vectorIndex]      = rays[(vectorBatchIndex * gangSize) + vectorIndex].org.w;
@@ -2335,11 +2360,11 @@ extern "C" void device_render (int* pixels,
           rayVector[vectorBatchIndex].hit.geomID[vectorIndex]     = rays[(vectorBatchIndex * gangSize) + vectorIndex].geomID;
           rayVector[vectorBatchIndex].hit.instID[0][vectorIndex]  = rays[(vectorBatchIndex * gangSize) + vectorIndex].instID;
         }
-
-        // Set up the context vector
-        contextVector.flags =(bounce == 0) ? ispc::RTC_INTERSECT_CONTEXT_FLAG_COHERENT : ispc::RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
-
     }
+
+    // Set up the context vector
+    ispc::RTCIntersectContext contextVector;
+    contextVector.flags = (bounce == 0) ? ispc::RTC_INTERSECT_CONTEXT_FLAG_COHERENT : ispc::RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
 
 
     // ********************************************************************** //
@@ -2347,8 +2372,8 @@ extern "C" void device_render (int* pixels,
     //  ulations done in this loop are not used to render the image.          //
     // ********************************************************************** //
     auto benchStart = high_resolution_clock::now();
-    parallel_for(size_t(0),size_t(vectorBatchSize),[&](const range<size_t>& range) {
-      for (size_t i=range.begin(); i<range.end(); i++)
+    parallel_for(size_t(0), size_t(vectorBatchSize), [&](const range<size_t> &range) {
+      for (size_t i = range.begin(); i < range.end(); i++)
       {
         ispc::benchmark_wrapper(g_scene, &contextVector, &rayVector[i]);
       }
@@ -2356,29 +2381,33 @@ extern "C" void device_render (int* pixels,
     auto benchStop = high_resolution_clock::now();
     auto duration1 = duration_cast<microseconds>(benchStop - benchStart);
 
-    if(printData) std::cout << "Time Taken - Parallel: " << duration1.count() << "\n";
+    if(printData) std::cout << "\tTime Taken - Parallel: " << duration1.count() << " ms" << std::endl;
+
+
+    // At this time we're done with the vectorized rays. I'll leave this here in
+    //  case we want to compare the two sets of answers.
+    free(rayVector);
 
     // ********************************************************************** //
     // This loop is used to get calculate the intersections used for the      //
     //  render.                                                               //
     // ********************************************************************** //
-    auto renderStart = high_resolution_clock::now();
-    parallel_for(size_t(0),size_t(batchSize),[&](const range<size_t>& range) {
-      const int threadIndex = (int)TaskScheduler::threadIndex();
-      for (size_t i=range.begin(); i<range.end(); i++)
-      {
-        rtcIntersect1(g_scene,&rayData[i].context.context,RTCRayHit_(rays[i]));
-        RayStats_addRay(g_stats[threadIndex]);
-      }
-    });
-    auto renderStop = high_resolution_clock::now();
-    auto duration = duration_cast<microseconds>(renderStop - renderStart);
+    if(outputRender)
+    {
+      auto renderStart = high_resolution_clock::now();
+      parallel_for(size_t(0), size_t(batchSize), [&](const range<size_t>& range) {
+        const int threadIndex = (int)TaskScheduler::threadIndex();
+        for (size_t i=range.begin(); i<range.end(); i++)
+        {
+          rtcIntersect1(g_scene,&rayData[i].context.context,RTCRayHit_(rays[i]));
+          RayStats_addRay(g_stats[threadIndex]);
+        }
+      });
+      auto renderStop = high_resolution_clock::now();
+      auto duration = duration_cast<microseconds>(renderStop - renderStart);
 
-    if(printData) std::cout << "Time Taken - Serial: " << duration.count() << "\n";
-
-    // At this time we're done with the vectorized rays. I'll leave this here in
-    //  case we want to compare the two sets of answers.
-    free(rayVector);
+      if(printData) std::cout << "\tTime Taken - Serial: " << duration.count() << " ms" << std::endl;
+    }
 
     // ********************************************************************** //
     // This function finishes the trace. After this function, the L value for
@@ -2389,9 +2418,6 @@ extern "C" void device_render (int* pixels,
       const int threadIndex = (int)TaskScheduler::threadIndex();
       for (size_t taskIndex=range.begin(); taskIndex<range.end(); taskIndex++)
       {
-        // This just makes the code a little cleaner
-        // int myIndex = rayData[taskIndex].pixel;
-
         // Calling this function populates the L value with the proper color of
         //  the pixel.
         renderPixelBatchFunction(rays[taskIndex],
@@ -2409,9 +2435,10 @@ extern "C" void device_render (int* pixels,
         // If the ray is no longer contributing (significantly) to the coloring of
         //  the pixel, we can stop processing it.
         // NOTE: Lw is a weight value
-        if (max(rayData[taskIndex].Lw.x,max(rayData[taskIndex].Lw.y,rayData[taskIndex].Lw.z)) < 0.01f)
+        Vec3fa weight = rayData[taskIndex].Lw;
+        if (max(weight.x, max(weight.y, weight.z)) < 0.01f)
         {
-          rayData[taskIndex].valid = 0;
+          rayData[taskIndex].valid = false;
         }
       }
     });
@@ -2436,13 +2463,12 @@ extern "C" void device_render (int* pixels,
       // If a ray is no longer needed, we need to add its contribution for its
       //  respective pixel. We do it this way because the erase-remove idiom
       //  involves overwriting invalid data.
-      if(firstRayData->valid == 0)
-      {
+      if(!firstRayData->valid) {
         color[firstRayData->pixel] += firstRayData->L / (float)g_spp;
       }
-      // Else, if the ray is still valid then it needs to be written to the front
-      //  of the vector and the result iterator incremented.
       else {
+        // Else, the ray is still valid. Write it to the front
+        //  of the vector and the result iterator incremented.
         *resultRayData = std::move(*firstRayData);
         ++resultRayData;
 
