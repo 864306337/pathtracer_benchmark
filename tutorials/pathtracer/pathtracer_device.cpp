@@ -57,27 +57,27 @@ bool g_subdiv_mode = false;
 unsigned int keyframeID = 0;
 
 /*Data in config.txt*/
-bool printData = false; //Controls output to the console
-bool outputRender = true; //Controls visual output to screen
+bool printRunning = false; //Prints individual intersection times
+bool outputRender = true; //Controls visual output to screen (parallel render)
+bool printAvg = false; //Prints running average of elapsed time for intersection calculations
 
-
-
-
+/*Bi-directional Reflectance Distribution Function:
+Basically, a bunch of variables related to a ray-primitive intersection.*/
 struct BRDF
 {
-  float Ns;               /*< specular exponent */
-  float Ni;               /*< optical density for the surface (index of refraction) */
-  Vec3fa Ka;              /*< ambient reflectivity */
-  Vec3fa Kd;              /*< diffuse reflectivity */
-  Vec3fa Ks;              /*< specular reflectivity */
-  Vec3fa Kt;              /*< transmission filter */
+  float  Ns,              /* specular exponent */
+         Ni;              /* optical density for the surface (index of refraction) */
+  Vec3fa Ka,              /* ambient reflectivity */
+         Kd,              /* diffuse reflectivity */
+         Ks,              /* specular reflectivity */
+         Kt;              /* transmission filter */
   float dummy[30];
 };
 
 struct Medium
 {
-  Vec3fa transmission; //!< Transmissivity of medium.
-  float eta;             //!< Refraction index of medium.
+  Vec3fa transmission; // Transmissivity of medium.
+  float eta;             // Refraction index of medium.
 };
 
 inline Medium make_Medium(const Vec3fa& transmission, const float eta)
@@ -89,7 +89,7 @@ inline Medium make_Medium(const Vec3fa& transmission, const float eta)
 }
 
 inline Medium make_Medium_Vacuum() {
-  return make_Medium(Vec3fa((float)1.0f),1.0f);
+  return make_Medium(Vec3fa(1.0f), 1.0f);
 }
 
 inline bool eq(const Medium& a, const Medium& b) {
@@ -100,11 +100,11 @@ inline Vec3fa sample_component2(const Vec3fa& c0, const Sample3f& wi0, const Med
                                const Vec3fa& c1, const Sample3f& wi1, const Medium& medium1,
                                const Vec3fa& Lw, Sample3f& wi_o, Medium& medium_o, const float s)
 {
-  const Vec3fa m0 = Lw*c0/wi0.pdf;
-  const Vec3fa m1 = Lw*c1/wi1.pdf;
+  const Vec3fa m0 = Lw * c0 / wi0.pdf;
+  const Vec3fa m1 = Lw * c1 / wi1.pdf;
 
-  const float C0 = wi0.pdf == 0.0f ? 0.0f : max(max(m0.x,m0.y),m0.z);
-  const float C1 = wi1.pdf == 0.0f ? 0.0f : max(max(m1.x,m1.y),m1.z);
+  const float C0 = wi0.pdf == 0.0f ? 0.0f : max(max(m0.x, m0.y), m0.z);
+  const float C1 = wi1.pdf == 0.0f ? 0.0f : max(max(m1.x, m1.y), m1.z);
   const float C  = C0 + C1;
 
   if (C == 0.0f) {
@@ -112,8 +112,8 @@ inline Vec3fa sample_component2(const Vec3fa& c0, const Sample3f& wi0, const Med
     return Vec3fa(0,0,0);
   }
 
-  const float CP0 = C0/C;
-  const float CP1 = C1/C;
+  const float CP0 = C0 / C;
+  const float CP1 = C1 / C;
   if (s < CP0) {
     wi_o = make_Sample3f(wi0.v,wi0.pdf*CP0);
     medium_o = medium0; return c0;
@@ -135,10 +135,11 @@ inline Sample3f cosineSampleHemisphere(const float  u, const float  v, const Vec
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-//                          Minneart BRDF                                     //
+//                            Material BRDFs                                  //
 ////////////////////////////////////////////////////////////////////////////////
 
-struct Minneart
+/*---Minnaert BRDF---*/
+struct Minnaert
 {
   /*! The reflectance parameter. The vale 0 means no reflection,
    *  and 1 means full reflection. */
@@ -149,7 +150,7 @@ struct Minneart
   float b;
 };
 
-inline Vec3fa Minneart__eval(const Minneart* This,
+inline Vec3fa Minnaert__eval(const Minnaert* This,
                      const Vec3fa &wo, const DifferentialGeometry &dg, const Vec3fa &wi)
 {
   const float cosThetaI = clamp(dot(wi,dg.Ns));
@@ -157,30 +158,27 @@ inline Vec3fa Minneart__eval(const Minneart* This,
   return (backScatter * cosThetaI * float(one_over_pi)) * This->R;
 }
 
-inline Vec3fa Minneart__sample(const Minneart* This,
+inline Vec3fa Minnaert__sample(const Minnaert* This,
                        const Vec3fa &wo,
                        const DifferentialGeometry &dg,
                        Sample3f &wi,
                        const Vec2f &s)
 {
   wi = cosineSampleHemisphere(s.x,s.y,dg.Ns);
-  return Minneart__eval(This, wo, dg, wi.v);
+  return Minnaert__eval(This, wo, dg, wi.v);
 }
 
-inline void Minneart__Constructor(Minneart* This, const Vec3fa& R, const float b)
+inline void Minnaert__Constructor(Minnaert* This, const Vec3fa& R, const float b)
 {
   This->R = R;
   This->b = b;
 }
 
-inline Minneart make_Minneart(const Vec3fa& R, const float f) {
-  Minneart m; Minneart__Constructor(&m,R,f); return m;
+inline Minnaert make_Minnaert(const Vec3fa& R, const float f) {
+  Minnaert m; Minnaert__Constructor(&m,R,f); return m;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-//                            Velvet BRDF                                     //
-////////////////////////////////////////////////////////////////////////////////
-
+/*---Velvet BRDF---*/
 struct Velvety
 {
   BRDF base;
@@ -224,10 +222,7 @@ inline Velvety make_Velvety(const Vec3fa& R, const float f) {
   Velvety m; Velvety__Constructor(&m,R,f); return m;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-//                  Dielectric Reflection BRDF                                //
-////////////////////////////////////////////////////////////////////////////////
-
+/*---Dielectric Reflection BRDF---*/
 struct DielectricReflection
 {
   float eta;
@@ -255,10 +250,7 @@ inline DielectricReflection make_DielectricReflection(const float etai, const fl
   DielectricReflection v; DielectricReflection__Constructor(&v,etai,etat); return v;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-//                                Lambertian BRDF                             //
-////////////////////////////////////////////////////////////////////////////////
-
+/*---Lambertian BRDF---*/
 struct Lambertian
 {
   Vec3fa R;
@@ -290,16 +282,13 @@ inline Lambertian make_Lambertian(const Vec3fa& R) {
 }
 
 
-////////////////////////////////////////////////////////////////////////////////
-//              Lambertian BRDF with Dielectric Layer on top                  //
-////////////////////////////////////////////////////////////////////////////////
-
+/*---Lambertian BRDF with Dielectric Layer on top---*/
 struct DielectricLayerLambertian
 {
-  Vec3fa T;             //!< Transmission coefficient of dielectricum
-  float etait;         //!< Relative refraction index etai/etat of both media
-  float etati;         //!< relative refraction index etat/etai of both media
-  Lambertian ground;   //!< the BRDF of the ground layer
+  Vec3fa T;            // Transmission coefficient of dielectricum
+  float etait,         // Relative refraction index etai/etat of both media
+        etati;         // relative refraction index etat/etai of both media
+  Lambertian ground;   // the BRDF of the ground layer
 };
 
 inline Vec3fa DielectricLayerLambertian__eval(const DielectricLayerLambertian* This,
@@ -371,20 +360,20 @@ inline DielectricLayerLambertian make_DielectricLayerLambertian(const Vec3fa& T,
   return m;
 }
 
-/*! Anisotropic power cosine microfacet distribution. */
+/* Anisotropic power cosine microfacet distribution. */
 struct AnisotropicBlinn {
-  Vec3fa dx;       //!< x-direction of the distribution.
-  Vec3fa dy;       //!< y-direction of the distribution.
-  Vec3fa dz;       //!< z-direction of the distribution.
-  Vec3fa Kr,Kt;
-  float nx;        //!< Glossiness in x direction with range [0,infinity[ where 0 is a diffuse surface.
-  float ny;        //!< Exponent that determines the glossiness in y direction.
-  float norm1;     //!< Normalization constant for calculating the pdf for sampling.
-  float norm2;     //!< Normalization constant for calculating the distribution.
+  Vec3fa dx;       // x-direction of the distribution.
+  Vec3fa dy;       // y-direction of the distribution.
+  Vec3fa dz;       // z-direction of the distribution.
+  Vec3fa Kr, Kt;
+  float nx;        // Glossiness in x direction with range [0,infinity[ where 0 is a diffuse surface.
+  float ny;        // Exponent that determines the glossiness in y direction.
+  float norm1;     // Normalization constant for calculating the pdf for sampling.
+  float norm2;     // Normalization constant for calculating the distribution.
   float side;
 };
 
-  /*! Anisotropic power cosine distribution constructor. */
+/* Anisotropic power cosine distribution constructor. */
 inline void AnisotropicBlinn__Constructor(AnisotropicBlinn* This, const Vec3fa& Kr, const Vec3fa& Kt,
                                           const Vec3fa& dx, float nx, const Vec3fa& dy, float ny, const Vec3fa& dz)
 {
@@ -673,17 +662,17 @@ void VelvetMaterial__preprocess(ISPCVelvetMaterial* material, BRDF& brdf, const 
 
 Vec3fa VelvetMaterial__eval(ISPCVelvetMaterial* This, const BRDF& brdf, const Vec3fa& wo, const DifferentialGeometry& dg, const Vec3fa& wi)
 {
-  Minneart minneart; Minneart__Constructor(&minneart,(Vec3fa)Vec3fa(This->reflectance),This->backScattering);
+  Minnaert Minnaert; Minnaert__Constructor(&Minnaert,(Vec3fa)Vec3fa(This->reflectance),This->backScattering);
   Velvety velvety; Velvety__Constructor (&velvety,Vec3fa((Vec3fa)This->horizonScatteringColor),This->horizonScatteringFallOff);
-  return Minneart__eval(&minneart,wo,dg,wi) + Velvety__eval(&velvety,wo,dg,wi);
+  return Minnaert__eval(&Minnaert,wo,dg,wi) + Velvety__eval(&velvety,wo,dg,wi);
 }
 
 Vec3fa VelvetMaterial__sample(ISPCVelvetMaterial* This, const BRDF& brdf, const Vec3fa& Lw, const Vec3fa& wo, const DifferentialGeometry& dg, Sample3f& wi_o, Medium& medium, const Vec2f& s)
 {
-  Minneart minneart; Minneart__Constructor(&minneart,Vec3fa((Vec3fa)This->reflectance),This->backScattering);
+  Minnaert Minnaert; Minnaert__Constructor(&Minnaert,Vec3fa((Vec3fa)This->reflectance),This->backScattering);
   Velvety velvety; Velvety__Constructor (&velvety,Vec3fa((Vec3fa)This->horizonScatteringColor),This->horizonScatteringFallOff);
 
-  Sample3f wi0; Vec3fa c0 = Minneart__sample(&minneart,wo,dg,wi0,s);
+  Sample3f wi0; Vec3fa c0 = Minnaert__sample(&Minnaert,wo,dg,wi0,s);
   Sample3f wi1; Vec3fa c1 = Velvety__sample(&velvety,wo,dg,wi1,s);
   return sample_component2(c0,wi0,medium,c1,wi1,medium,Lw,wi_o,medium,s.x);
 }
@@ -1615,10 +1604,10 @@ Vec3fa renderPixelFunction(float x, float y, RandomSampler& sampler, const ISPCC
   DifferentialGeometry dg;
 
   /* iterative path tracer loop */
-  for (int i=0; i<g_max_path_length; i++)
+  for (unsigned int i = 0; i < g_max_path_length; i++)
   {
     /* terminate if contribution too low */
-    if (max(Lw.x,max(Lw.y,Lw.z)) < 0.01f)
+    if (max(Lw.x, max(Lw.y, Lw.z)) < 0.01f)
       break;
 
     /* intersect ray with scene */
@@ -1664,7 +1653,7 @@ Vec3fa renderPixelFunction(float x, float y, RandomSampler& sampler, const ISPCC
     Vec3fa c = Vec3fa(1.0f);
     const Vec3fa transmission = medium.transmission;
     if (ne(transmission,Vec3fa(1.0f)))
-      c = c * pow(transmission,ray.tfar);
+      c *= pow(transmission,ray.tfar);
 
     /* calculate BRDF */
     BRDF brdf;
@@ -1674,7 +1663,7 @@ Vec3fa renderPixelFunction(float x, float y, RandomSampler& sampler, const ISPCC
 
     /* sample BRDF at hit point */
     Sample3f wi1;
-    c = c * Material__sample(material_array,materialID,numMaterials,brdf,Lw, wo, dg, wi1, medium, RandomSampler_get2D(sampler));
+    c *= Material__sample(material_array,materialID,numMaterials,brdf,Lw, wo, dg, wi1, medium, RandomSampler_get2D(sampler));
 
     /* iterate over lights */
     context.context.flags = g_iflags_incoherent;
@@ -1684,22 +1673,22 @@ Vec3fa renderPixelFunction(float x, float y, RandomSampler& sampler, const ISPCC
       Light_SampleRes ls = l->sample(l,dg,RandomSampler_get2D(sampler));
       if (ls.pdf <= 0.0f) continue;
       Vec3fa transparency = Vec3fa(1.0f);
-      Ray shadow(dg.P,ls.dir,dg.eps,ls.dist,time);
+      Ray shadow(dg.P, ls.dir, dg.eps, ls.dist, time);
       context.userRayExt = &transparency;
       rtcOccluded1(g_scene,&context.context,RTCRay_(shadow));
       RayStats_addShadowRay(stats);
       //if (shadow.geomID != RTC_INVALID_GEOMETRY_ID) continue;
-      if (max(max(transparency.x,transparency.y),transparency.z) > 0.0f)
-        L = L + Lw*ls.weight*transparency*Material__eval(material_array,materialID,numMaterials,brdf,wo,dg,ls.dir);
+      if (max(max(transparency.x, transparency.y), transparency.z) > 0.0f)
+        L += Lw * ls.weight * transparency * Material__eval(material_array, materialID, numMaterials, brdf, wo, dg, ls.dir);
     }
 
     if (wi1.pdf <= 1E-4f /* 0.0f */) break;
-    Lw = Lw*c/wi1.pdf;
+    Lw *= c / wi1.pdf;
 
     /* setup secondary ray */
     float sign = dot(wi1.v,dg.Ng) < 0.0f ? -1.0f : 1.0f;
-    dg.P = dg.P + sign*dg.eps*dg.Ng;
-    init_Ray(ray, dg.P,normalize(wi1.v),dg.eps,inf,time);
+    dg.P += sign * dg.eps * dg.Ng;
+    init_Ray(ray, dg.P, normalize(wi1.v), dg.eps, inf, time);
   }
   return L;
 }
@@ -1711,16 +1700,16 @@ Vec3fa renderPixelStandard(float x, float y, const ISPCCamera& camera, RayStats&
 
   Vec3fa L = Vec3fa(0.0f);
 
-  for (int i=0; i<g_spp; i++)
+  for (unsigned int i = 0; i < g_spp; i++)
   {
     RandomSampler_init(sampler, (int)x, (int)y, g_accu_count*g_spp+i);
 
     /* calculate pixel color */
     float fx = x + RandomSampler_get1D(sampler);
     float fy = y + RandomSampler_get1D(sampler);
-    L = L + renderPixelFunction(fx,fy,sampler,camera,stats);
+    L += renderPixelFunction(fx,fy,sampler,camera,stats);
   }
-  L = L/(float)g_spp;
+  L /= (float)g_spp;
   return L;
 }
 
@@ -1766,7 +1755,7 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
                          const int numTilesX,
                          const int numTilesY)
 {
-  renderTile(taskIndex,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
+  renderTile(taskIndex, threadIndex, pixels, width, height, time, camera, numTilesX, numTilesY); //TODO where does this point? Can this outer method be deleted?
 }
 
 
@@ -1775,11 +1764,11 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
 // ================================================================================================================================
 // ================================================================================================================================
 
-// Struct to organize data
-// TODO: Add comments to explain variables
-struct RayData {
+/*Data of the ray-primitive intersection*/
+struct RayData { //TODO document members
   RandomSampler sampler;
   float time;
+  /*The pixel color (R, G, B).*/
   Vec3fa L = Vec3fa(0.0f);
   Vec3fa Lw = Vec3fa(1.0f);
   Medium medium = make_Medium_Vacuum();
@@ -1789,9 +1778,8 @@ struct RayData {
   unsigned int pixel;
 };
 
-
 // ***************************************************************************//
-// Populates the L value with the proper color of the pixel.
+// Populates L with the proper color of the pixel.
 // ***************************************************************************//
 void renderPixelBatchFunction(Ray& ray,
                                 RandomSampler& sampler,
@@ -2167,7 +2155,7 @@ extern "C" void device_init (char* cfg)
   std::ifstream configFile("config.txt");
   std::string line;
   //Holds the values of the options.
-  bool vals[2];
+  bool vals[3];
   unsigned int i = 0;
   while(std::getline(configFile, line)) {
     if(line[0] != ';') {
@@ -2178,6 +2166,7 @@ extern "C" void device_init (char* cfg)
       catch(const std::exception& e) {
         std::cout << "Something went wrong in reading the config file." << std::endl;
         std::cout << e.what() << std::endl;
+        configFile.close();
         exit(0);
       }
       i++;
@@ -2189,7 +2178,8 @@ extern "C" void device_init (char* cfg)
 
   //assign the options to the variables
   outputRender = vals[0];
-  printData = vals[1];
+  printRunning = vals[1];
+  printAvg = vals[2];
   configFile.close();
 } // device_init
 
@@ -2279,14 +2269,18 @@ extern "C" void device_render (int* pixels,
 
   bool firstPass = true; //This was 'static'. Not sure why, may need to undo.
 
+  unsigned int sumSerial = 0, sumParallel = 0;
+  unsigned int numSerial = 0, numParallel = 0;
+
+
   // ************************************************************************ //
   // For loop to trace rays to completion (or until they reach the maximum    //
   //  path depth.                                                             //
   // ************************************************************************ //
   for (unsigned int bounce = 0; bounce < g_max_path_length; bounce++)
   {
-    // Just some debug output_iterator
-    if(printData) {
+
+    if(printAvg || printRunning) {
       std::cout << "For bounce " << bounce << ":" << std::endl;
       std::cout << "\tBatch Size: " << batchSize << std::endl;
     }
@@ -2379,9 +2373,11 @@ extern "C" void device_render (int* pixels,
       }
     });
     auto benchStop = high_resolution_clock::now();
-    auto duration1 = duration_cast<microseconds>(benchStop - benchStart);
+    auto parallelDuration = duration_cast<microseconds>(benchStop - benchStart);
+    sumParallel += parallelDuration.count();
+    numParallel++;
 
-    if(printData) std::cout << "\tTime Taken - Parallel: " << duration1.count() << " ms" << std::endl;
+    if(printAvg) std::cout << "\tRunning Average - Parallel: " << (float)sumParallel / (float)numParallel << " ms" << std::endl;
 
 
     // At this time we're done with the vectorized rays. I'll leave this here in
@@ -2404,9 +2400,12 @@ extern "C" void device_render (int* pixels,
         }
       });
       auto renderStop = high_resolution_clock::now();
-      auto duration = duration_cast<microseconds>(renderStop - renderStart);
+      auto serialDuration = duration_cast<microseconds>(renderStop - renderStart);
+      sumSerial += serialDuration.count();
+      numSerial++;
 
-      if(printData) std::cout << "\tTime Taken - Serial: " << duration.count() << " ms" << std::endl;
+
+      if(printAvg) std::cout << "\tRunningAverage - Serial: " << (float)sumSerial / (float)numSerial << " ms" << std::endl;
     }
 
     // ********************************************************************** //
@@ -2492,7 +2491,7 @@ extern "C" void device_render (int* pixels,
 
     // Update the batchSize for the next loop iteration.
     batchSize = rays.size();
-  } //end of for loop
+  } //end of giant for loop
 
   firstPass = false;
 

@@ -1,2 +1,7 @@
+; Configuration file (under construction)
+; outputRender [bool](Whether or not to output the image to the user)
 1
+; printRunning [bool] (Whether or not to print individual intersections to the console)
+1
+; printAvg [bool] (Whether or not to print running averages of the intersection times)
 1
