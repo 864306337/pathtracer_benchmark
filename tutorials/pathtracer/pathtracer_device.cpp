@@ -59,6 +59,9 @@ extern "C" bool g_accumulate;
 bool g_subdiv_mode = false;
 unsigned int keyframeID = 0;
 
+// used to assign unique ray id to rays
+unsigned int rayIDCntr = 0;
+
 struct BRDF
 {
   float Ns;               /*< specular exponent */
@@ -1948,8 +1951,8 @@ void batchTileTask (int taskIndex,
     
     for(unsigned int sample_index = 0; sample_index < g_spp; ++sample_index)
     {
-      //
       unsigned int batch_index = (pixel_index * g_spp) + sample_index;
+      //unsigned int batch_index = rayIDCntr;
 
 	  // RandomSampler is used to generate random numbers
       RandomSampler_init(rayData[batch_index].sampler, (int)x, (int)y, g_accu_count * g_spp + sample_index);
@@ -1965,15 +1968,9 @@ void batchTileTask (int taskIndex,
 
 	  // assign the index value to the ray.id to be used to map ray to pixel
       rayData[batch_index].pixel = pixel_index;
-
+	  
 	  // Store the ray into the batch where the index represents the pixel position in the frame
       rays[batch_index] = ray;
-
-      // NOTE: Nothing I try is able to get this to work. When I test it later,
-      //  the value stored here does not match what I store in the pixel value.
-      // TODO: It's possible that the ID is not being handled properly, resulting
-      //   in this odd behavior.
-      //rays[batch_index].id = batch_index;
     }
   }
 }
@@ -2019,7 +2016,7 @@ void recordBatch(const std::vector<Ray> &rays,
   {
     unsigned int rayID;
     unsigned int geomID;
-    unsigned int instID;
+    unsigned int primID;
     float tfar;
   } intData;
 
@@ -2061,7 +2058,7 @@ void recordBatch(const std::vector<Ray> &rays,
     // Get intersection data
     recordedInt[batchIndex].rayID   = (*it).id;
     recordedInt[batchIndex].geomID  = (*it).geomID;
-    recordedInt[batchIndex].instID  = (*it).instID;
+    recordedInt[batchIndex].primID  = (*it).primID;
     recordedInt[batchIndex].tfar    = (*it).tfar;
     
     ++batchIndex;
@@ -2077,12 +2074,42 @@ void recordBatch(const std::vector<Ray> &rays,
   intFileName << bounce << ".int";
 
   // Write all the data to the proper file
+  // Write to bin file
+  /*
   auto raysFile = std::fstream(raysFileName.str().c_str(), std::ios::out | std::ios::binary);
   raysFile.write((char*)&recordedRays[0], sizeof(raysData)*batchSize);
+  */
+  
+  // Write to txt file
+  auto raysFile = std::fstream(raysFileName.str().c_str(), std::ios::out);
+  batchIndex = 0;
+  for (auto it = rays.begin(); it != rays.end(); ++it) {
+    raysFile << recordedRays[batchIndex].rayID << " " << recordedRays[batchIndex].org_x << " " << recordedRays[batchIndex].org_y << " " 
+      << recordedRays[batchIndex].org_z << " " << recordedRays[batchIndex].dir_x << " " << recordedRays[batchIndex].dir_y << " " 
+      << recordedRays[batchIndex].dir_z << std::endl;
+    ++batchIndex;
+  }
+  /**/
+
   raysFile.close();
 
+  // Write to bin file
+  /*
   auto intFile = std::fstream(intFileName.str().c_str(), std::ios::out | std::ios::binary);
   intFile.write((char*)&recordedInt[0], sizeof(intData)*batchSize);
+  */
+  
+  // Write to txt file
+  /**/
+  auto intFile = std::fstream(intFileName.str().c_str(), std::ios::out);
+  batchIndex = 0;
+  for (auto it = rays.begin(); it != rays.end(); ++it) {
+    intFile << recordedInt[batchIndex].rayID << " " << recordedInt[batchIndex].geomID << " " << recordedInt[batchIndex].primID << " " 
+      << recordedInt[batchIndex].tfar << std::endl;
+    ++batchIndex;
+  }
+  /**/
+
   intFile.close();
 }
 
@@ -2260,10 +2287,13 @@ extern "C" void device_render (int* pixels,
     printf("\nFor bounce %d:\n", bounce);
     printf("batchSize: %d\n", batchSize);
     
-    if(firstPass)
-    {
-      recordBatch(rays, bounce);
-    }
+     // ********************************************************************* //
+     // Assign a unique ray id to each ray traversing through the scene.      //
+     // ********************************************************************* //
+     for (int i=0; i<batchSize; i++) {
+        rays[i].id = rayIDCntr;
+        ++rayIDCntr;
+     }
 
     // ********************************************************************** //
     // This seems really dumb, but I assure you it's for a reason... This     //
@@ -2370,7 +2400,14 @@ extern "C" void device_render (int* pixels,
     auto duration = duration_cast<microseconds>(stop - start);
     
     std::cout << "Time Taken - Serial: " << duration.count() << std::endl;
-    
+   
+    // ********************************************************************** //
+    // Write ray data to files                                                //
+    // ********************************************************************** //
+    if (firstPass) {
+       recordBatch(rays,bounce);
+    }
+ 
     // At this time we're done with the vectorized rays. I'll leave this here in
     //  case we want to compare the two sets of answers.
     free(rayVector);
@@ -2410,7 +2447,7 @@ extern "C" void device_render (int* pixels,
         }
       }
     });
-    
+  
     // ********************************************************************** //
     // Remove the rays that no longer need to be traced. We might be able to  //
     //  find a faster/more efficient way of doing this in the future, but for //
